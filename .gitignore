@@ -107,3 +107,4 @@ venv.bak/
 # mypy
 .mypy_cache/
 .idea/
+project_ppo/src/models/
