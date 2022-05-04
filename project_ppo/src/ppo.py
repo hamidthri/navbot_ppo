@@ -422,6 +422,7 @@ class PPO:
 		# Return the sampled action and the log probability of that action in our distribution
 		return action.detach().cpu().numpy(), log_prob.detach()
 
+
 	def evaluate(self, batch_obs, batch_acts):
 		"""
 			Estimate the values of each observation, and the log probs of
@@ -451,7 +452,6 @@ class PPO:
 		mean[1] = torch.clip(mean[1], -1, 1).detach()
 		dist = MultivariateNormal(mean, self.cov_mat)
 		log_probs = dist.log_prob(batch_acts)
-
 		# Return the value vector V of each observation in the batch
 		# and log probabilities log_probs of each action in the batch
 		return self.V, log_probs
