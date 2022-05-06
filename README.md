@@ -1,2 +1,2 @@
-# navbot_ppo
-## the project for turtle bot navigation
+# Navbot_ppo using Reinforcement Learning
+## the project for turtlebot navigation
