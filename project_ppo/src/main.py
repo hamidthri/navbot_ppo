@@ -86,8 +86,8 @@ def test(env, actor_model):
         sys.exit(0)
 
     # Extract out dimensions of observation and action spaces
-    obs_dim = env.observation_space.shape[0]
-    act_dim = env.action_space.shape[0]
+    obs_dim = state_dim
+    act_dim = action_dim
 
     # Build our policy the same way we build our actor model in PPO
     policy = NetActor(obs_dim, act_dim)
