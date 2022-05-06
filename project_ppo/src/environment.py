@@ -152,6 +152,12 @@ class Env():
                 target.model_xml = goal_urdf
                 self.goal_position.position.x = random.uniform(-3.6, 3.6)
                 self.goal_position.position.y = random.uniform(-3.6, 3.6)
+                while 1.8 <= self.goal_position.position.x <= 2.2 and -1.4 <= self.goal_position.position.y <= 1.4 \
+                        or -2.2 <= self.goal_position.position.x <= -1.8 and -1.4 <= self.goal_position.position.y <= 1.4 \
+                        or -1.4 <= self.goal_position.position.x <= 1.4 and 1.8 <= self.goal_position.position.y <= 2.2 \
+                        or -1.4 <= self.goal_position.position.x <= 1.4 and -2.2 <= self.goal_position.position.y <= -1.8:
+                    self.goal_position.position.x = random.uniform(-3.6, 3.6)
+                    self.goal_position.position.y = random.uniform(-3.6, 3.6)
                 self.goal(target.model_name, target.model_xml, 'namespace', self.goal_position, 'world')
             except (rospy.ServiceException) as e:
                 print("/gazebo/failed to build the target")
@@ -206,12 +212,15 @@ class Env():
             target = SpawnModel
             target.model_name = 'target'  # the same with sdf name
             target.model_xml = goal_urdf
+            # self.goal_position.position.x = random.uniform(-3.6, 3.6)
             self.goal_position.position.x = random.uniform(-3.6, 3.6)
             self.goal_position.position.y = random.uniform(-3.6, 3.6)
-
-            # if -0.3 < self.goal_position.position.x < 0.3 and -0.3 < self.goal_position.position.y < 0.3:
-            #     self.goal_position.position.x += 1
-            #     self.goal_position.position.y += 1
+            while 1.8 <= self.goal_position.position.x <= 2.2 and -1.4 <= self.goal_position.position.y <= 1.4\
+                    or -2.2 <= self.goal_position.position.x <= -1.8 and -1.4 <= self.goal_position.position.y <= 1.4\
+                    or -1.4 <= self.goal_position.position.x <= 1.4 and 1.8 <= self.goal_position.position.y <= 2.2\
+                    or -1.4 <= self.goal_position.position.x <= 1.4 and -2.2 <= self.goal_position.position.y <= -1.8:
+                self.goal_position.position.x = random.uniform(-3.6, 3.6)
+                self.goal_position.position.y = random.uniform(-3.6, 3.6)
 
             self.goal(target.model_name, target.model_xml, 'namespace', self.goal_position, 'world')
         except (rospy.ServiceException) as e:
