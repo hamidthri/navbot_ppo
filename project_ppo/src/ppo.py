@@ -334,6 +334,9 @@ class PPO:
 		# Track episodic lengths and rewards
 		batch_rews.append(ep_rews)
 		if one_round != 0:
+			print('Step: %3i' % one_round, '| avg_reward:{:.2f}'.format(episode_reward / one_round),
+				  '| Time step: %i' % (t_so_far + np.sum(batch_lens)), '|', result)
+
 			self.logger['Episode_Rewards'].append(episode_reward / one_round)
 		f = open(record_dir + '/ppo' + '.txt', 'a+')
 		for i in self.logger['Episode_Rewards']:
@@ -410,10 +413,6 @@ class PPO:
 
 		# Sample an action from the distribution
 		action = dist.sample()
-		# action1 = action
-		# action[0] = F.sigmoid(action[0])
-		# action[1] = F.tanh(action[1])
-		# action[1] = 1.5 * action[1]
 		action[0] = torch.clip(action[0], 0, 1)
 		action[1] = torch.clip(action[1], -1, 1)
 		# Calculate the log probability for that action
@@ -445,9 +444,6 @@ class PPO:
 		# Calculate the log probabilities of batch actions using most recent actor network.
 		# This segment of code is similar to that in get_action()
 		mean = self.actor(batch_obs)
-		# mean[0] = F.sigmoid(mean[0]).detach()
-		# mean[1] = F.tanh(mean[1]).detach()
-		# mean[1] = 1.5 * mean[1]
 		mean[0] = torch.clip(mean[0], 0, 1).detach()
 		mean[1] = torch.clip(mean[1], -1, 1).detach()
 		dist = MultivariateNormal(mean, self.cov_mat)
@@ -546,13 +542,6 @@ class PPO:
 		avg_ep_rews = np.mean([np.sum(ep_rews) for ep_rews in self.logger['batch_rews']])
 		avg_actor_loss = np.mean([losses.detach().cpu().mean() for losses in self.logger['actor_losses']])
 		avg_critic_loss = np.mean([losses.detach().cpu().mean() for losses in self.logger['critic_losses']])
-		# print(avg_actor_loss)
-		# print(avg_critic_loss)
-		# Round decimal places for more aesthetic logging messages
-		# avg_ep_lens = str(round(avg_ep_lens, 2))
-		# avg_ep_rews = str(round(avg_ep_rews, 2))
-		# avg_actor_loss = str(round(avg_actor_loss, 5))
-		# avg_critic_loss = str(round(avg_critic_loss, 5))
 
 		# Print logging statements
 		print(flush=True)
@@ -579,7 +568,10 @@ class PPO:
 
 		for i, loss in enumerate(self.logger['critic_losses']):
 			self.writer.add_scalar("Critic_loss/train", loss, all_steps - curr_steps + i)
-		# self.logger['Episode_Rewards'].append(avg_ep_rews)
+
+		for i, Reward in enumerate(self.logger['Episode_Rewards']):
+			self.writer.add_scalar("Episode_Rewards/train", Reward, all_steps - curr_steps + i)
+
 		self.logger_global['Iteration'] += 1
 		self.writer.add_scalar("avg_ep_rews/train", avg_ep_rews, self.logger_global['Iteration'])
 
@@ -588,3 +580,4 @@ class PPO:
 		self.logger['batch_rews'] = []
 		self.logger['actor_losses'] = []
 		self.logger['critic_losses'] = []
+		self.logger['Episode_Rewards'] = []
