@@ -329,7 +329,7 @@
             <ambient>1 1 1 1</ambient>
           </material>
         </visual>
-        <pose frame=''>-2 0 0 0 -0 1.5708</pose>
+        <pose frame=''>0 -2 0 0 -0 3.14159</pose>
         <self_collide>0</self_collide>
         <kinematic>0</kinematic>
         <gravity>1</gravity>
