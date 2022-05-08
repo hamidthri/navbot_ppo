@@ -15,6 +15,7 @@ from sensor_msgs.msg import Image
 from nav_msgs.msg import Odometry
 from std_srvs.srv import Empty
 from gazebo_msgs.srv import SpawnModel, DeleteModel
+from test import list_angular
 # from tf.transformations import euler_from_quaternion
 
 diagonal_dis = math.sqrt(2) * (3.6 + 3.8)
@@ -49,7 +50,8 @@ class Env():
     #     time.sleep(10)
 
     def getGoalDistace(self):
-        goal_distance = math.hypot(self.goal_position.position.x - self.position.x, self.goal_position.position.y - self.position.y)
+        goal_distance = math.hypot(self.goal_position.position.x - self.position.x,
+                                   self.goal_position.position.y - self.position.y)
         self.past_distance = goal_distance
 
         return goal_distance
@@ -62,9 +64,9 @@ class Env():
         yaw = round(math.degrees(math.atan2(2 * (q_x * q_y + q_w * q_z), 1 - 2 * (q_y * q_y + q_z * q_z))))
 
         if yaw >= 0:
-             yaw = yaw
+            yaw = yaw
         else:
-             yaw = yaw + 360
+            yaw = yaw + 360
 
         rel_dis_x = round(self.goal_position.position.x - self.position.x, 1)
         rel_dis_y = round(self.goal_position.position.y - self.position.y, 1)
@@ -118,19 +120,31 @@ class Env():
         if min_range > min(scan_range) > 0:
             done = True
 
-        current_distance = math.hypot(self.goal_position.position.x - self.position.x, self.goal_position.position.y - self.position.y)
+        current_distance = math.hypot(self.goal_position.position.x - self.position.x,
+                                      self.goal_position.position.y - self.position.y)
         if current_distance <= self.threshold_arrive:
             # done = True
             arrive = True
 
         return scan_range, current_distance, yaw, rel_theta, diff_angle, done, arrive
 
-    def setReward(self, done, arrive):
-        current_distance = math.hypot(self.goal_position.position.x - self.position.x, self.goal_position.position.y - self.position.y)
+    def setReward(self, done, arrive, state1):
+        current_distance = math.hypot(self.goal_position.position.x - self.position.x,
+                                      self.goal_position.position.y - self.position.y)
+        list_ang = list_angular(state1)
+        dif_angulars = []
+        for ang in list_ang:
+            dif_angs = (90 - self.diff_angle) - ang
+            if dif_angs < 0:
+                dif_angs *= -1
+            dif_angulars.append(dif_angs)
+        sum = 0
+        for diffs in dif_angulars:
+            sum = sum + (90 - diffs)
 
-        distance_rate = (self.past_distance - current_distance)
+        distance_rate = (self.past_distance - current_distance) + sum
 
-        reward = 500.*distance_rate
+        reward = 500. * distance_rate
         self.past_distance = current_distance
 
         if done:
@@ -186,13 +200,13 @@ class Env():
                 pass
 
         state, rel_dis, yaw, rel_theta, diff_angle, done, arrive = self.getState(data)
-        state = [i / 3.5 for i in state]
+        state1 = [i / 3.5 for i in state]
 
         for pa in past_action:
             state.append(pa)
 
-        state = state + [rel_dis / diagonal_dis, yaw / 360, rel_theta / 180, diff_angle / 180]
-        reward = self.setReward(done, arrive)
+        state = state1 + [rel_dis / diagonal_dis, yaw / 360, rel_theta / 180, diff_angle / 180]
+        reward = self.setReward(done, arrive, state1)
 
         return np.asarray(state), reward, done, arrive
 
@@ -220,9 +234,9 @@ class Env():
             self.goal_position.position.y = 0
 
             # self.goal_position.position.y = random.uyniform(-3.6, 3.6)
-            while 1.8 <= self.goal_position.position.x <= 2.2 and -1.4 <= self.goal_position.position.y <= 1.4\
-                    or -2.2 <= self.goal_position.position.x <= -1.8 and -1.4 <= self.goal_position.position.y <= 1.4\
-                    or -1.4 <= self.goal_position.position.x <= 1.4 and 1.8 <= self.goal_position.position.y <= 2.2\
+            while 1.8 <= self.goal_position.position.x <= 2.2 and -1.4 <= self.goal_position.position.y <= 1.4 \
+                    or -2.2 <= self.goal_position.position.x <= -1.8 and -1.4 <= self.goal_position.position.y <= 1.4 \
+                    or -1.4 <= self.goal_position.position.x <= 1.4 and 1.8 <= self.goal_position.position.y <= 2.2 \
                     or -1.4 <= self.goal_position.position.x <= 1.4 and -2.2 <= self.goal_position.position.y <= -1.8:
                 self.goal_position.position.x = random.uniform(-3.6, 3.6)
                 self.goal_position.position.y = random.uniform(-3.6, 3.6)
