@@ -19,6 +19,9 @@ from test import list_angular
 # from tf.transformations import euler_from_quaternion
 
 diagonal_dis = math.sqrt(2) * (3.6 + 3.8)
+inner_env = math.sqrt(2) * 2.25
+num_scan = 20
+
 goal_model_dir = os.path.join(os.path.split(os.path.realpath(__file__))[0], '..', '..', 'turtlebot3_simulations',
                               'turtlebot3_gazebo', 'models', 'Target', 'model.sdf')
 
@@ -131,20 +134,42 @@ class Env():
     def setReward(self, done, arrive, state1):
         current_distance = math.hypot(self.goal_position.position.x - self.position.x,
                                       self.goal_position.position.y - self.position.y)
-        list_ang = list_angular(state1)
-        dif_angulars = []
-        for ang in list_ang:
-            dif_angs = (90 - self.diff_angle) - ang
-            if dif_angs < 0:
-                dif_angs *= -1
-            dif_angulars.append(dif_angs)
-        sum = 0
-        for diffs in dif_angulars:
-            sum = sum + (90 - diffs)
+        list_ang = list_angular(state1, num_scan)
 
-        distance_rate = (self.past_distance - current_distance) + sum
+        # euc_dis_goal = math.hypot((self.goal_position.position.x), (self.goal_position.position.y))
+        # euc_dis_rob = math.hypot((self.position.x), (self.position.y))
 
-        reward = 500. * distance_rate
+        # Target out
+        first_condition_target = self.goal_position.position.x >= 2.25 or self.goal_position.position.x <= -2.25
+        sec_condition_target = -2.25 <= self.goal_position.position.x <= 2.25 and (self.goal_position.position.y <= -2.25 or self.goal_position.position.y >= 2.25)
+        first_con = first_condition_target or sec_condition_target
+        # Robot out
+        third_condition_robot = (self.position.x >= 2.25 or self.position.x <= -2.25)
+        fourth_condition_robot = -2.25 <= self.position.x <= 2.25 and (self.position.y <= -2.25 or self.position.y >= 2.25)
+        sec_con = third_condition_robot or fourth_condition_robot
+        # if ((euc_dis_goal > inner_env) and (euc_dis_rob  < inner_env)) or ((euc_dis_rob > inner_env) and  (euc_dis_goal < inner_env)) and  (-90 < self.diff_angle < 90):
+        if ((first_con and not sec_con) or (not first_con and sec_con)) and (-90 < self.diff_angle < 90):
+            if len(list_ang) != 0:
+                dif_angulars = []
+                for ang in list_ang:
+                    dif_angs = (90 - self.diff_angle) - ang
+                    if dif_angs < 0:
+                        dif_angs *= -1
+                    dif_angulars.append(dif_angs)
+                sum = 0
+                alpha = 0.1
+                dif_angulars.sort()
+                for i, diffs in enumerate(dif_angulars):
+                    sum = sum + alpha ** i * (90 - diffs)
+                distance_rate = (self.past_distance - current_distance)
+                reward = 500. * distance_rate + sum
+            else:
+                distance_rate = (self.past_distance - current_distance)
+                reward = 500. * distance_rate
+        else:
+            distance_rate = (self.past_distance - current_distance)
+            reward = 500. * distance_rate
+
         self.past_distance = current_distance
 
         if done:
@@ -203,7 +228,7 @@ class Env():
         state1 = [i / 3.5 for i in state]
 
         for pa in past_action:
-            state.append(pa)
+            state1.append(pa)
 
         state = state1 + [rel_dis / diagonal_dis, yaw / 360, rel_theta / 180, diff_angle / 180]
         reward = self.setReward(done, arrive, state1)
@@ -230,11 +255,11 @@ class Env():
             target.model_xml = goal_urdf
             # self.goal_position.position.x = random.uniform(-3.6, 3.6)
             # self.goal_position.position.x = random.uniform(-3.6, 3.6)
-            self.goal_position.position.x = 3
+            self.goal_position.position.x = -3
             self.goal_position.position.y = 0
 
             # self.goal_position.position.y = random.uyniform(-3.6, 3.6)
-            while 1.8 <= self.goal_position.position.x <= 2.2 and -1.4 <= self.goal_position.position.y <= 1.4 \
+            while 1.6 <= self.goal_position.position.x <= 2.45 and -1.2 <= self.goal_position.position.y <= 1.4 \
                     or -2.2 <= self.goal_position.position.x <= -1.8 and -1.4 <= self.goal_position.position.y <= 1.4 \
                     or -1.4 <= self.goal_position.position.x <= 1.4 and 1.8 <= self.goal_position.position.y <= 2.2 \
                     or -1.4 <= self.goal_position.position.x <= 1.4 and -2.2 <= self.goal_position.position.y <= -1.8:
