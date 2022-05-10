@@ -290,6 +290,7 @@ class PPO:
 			# Calculate action and make a step in the env.
 			# Note that rew is short for reward.
 			action, log_prob = self.get_action(obs, t_so_far, one_round)
+			action = [1, 0]
 			# action[1] = action[1] * 2 / 3
 			obs, rew, done, arrive = self.env.step(action, past_action)
 			past_action = action

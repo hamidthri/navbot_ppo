@@ -18,7 +18,7 @@ from gazebo_msgs.srv import SpawnModel, DeleteModel
 from test import list_angular
 # from tf.transformations import euler_from_quaternion
 
-diagonal_dis = math.sqrt(2) * (3.6 + 3.8)
+diagonal_dis = math.sqrt(2) * (5.2 + 5.2)
 inner_env = math.sqrt(2) * 2.25
 num_scan = 20
 
@@ -147,6 +147,7 @@ class Env():
         third_condition_robot = (self.position.x >= 2.25 or self.position.x <= -2.25)
         fourth_condition_robot = -2.25 <= self.position.x <= 2.25 and (self.position.y <= -2.25 or self.position.y >= 2.25)
         sec_con = third_condition_robot or fourth_condition_robot
+        first_rate = 200
         # if ((euc_dis_goal > inner_env) and (euc_dis_rob  < inner_env)) or ((euc_dis_rob > inner_env) and  (euc_dis_goal < inner_env)) and  (-90 < self.diff_angle < 90):
         if ((first_con and not sec_con) or (not first_con and sec_con)) and (-90 < self.diff_angle < 90):
             if len(list_ang) != 0:

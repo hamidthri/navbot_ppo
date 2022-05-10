@@ -120,7 +120,6 @@ class Env():
 
         current_distance = math.hypot(self.goal_position.position.x - self.position.x, self.goal_position.position.y - self.position.y)
         if current_distance <= self.threshold_arrive:
-            # done = True
             arrive = True
 
         return scan_range, current_distance, yaw, rel_theta, diff_angle, done, arrive
@@ -129,7 +128,7 @@ class Env():
         current_distance = math.hypot(self.goal_position.position.x - self.position.x, self.goal_position.position.y - self.position.y)
 
         distance_rate = (self.past_distance - current_distance)
-
+        print(distance_rate)
         reward = 500.*distance_rate
         self.past_distance = current_distance
 
