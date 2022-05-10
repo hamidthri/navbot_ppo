@@ -138,7 +138,8 @@ class Env():
 
         # euc_dis_goal = math.hypot((self.goal_position.position.x), (self.goal_position.position.y))
         # euc_dis_rob = math.hypot((self.position.x), (self.position.y))
-
+        first_rate = 500
+        second_rate = 200
         # Target out
         first_condition_target = self.goal_position.position.x >= 2.25 or self.goal_position.position.x <= -2.25
         sec_condition_target = -2.25 <= self.goal_position.position.x <= 2.25 and (self.goal_position.position.y <= -2.25 or self.goal_position.position.y >= 2.25)
@@ -163,13 +164,16 @@ class Env():
                 for i, diffs in enumerate(dif_angulars):
                     sum = sum + alpha ** i * (90 - diffs)
                 distance_rate = (self.past_distance - current_distance)
-                reward = 500. * distance_rate + sum
+                reward = second_rate * distance_rate + sum
             else:
                 distance_rate = (self.past_distance - current_distance)
-                reward = 500. * distance_rate
+                reward = first_rate * distance_rate
+        elif len(list_ang) == num_scan:
+            distance_rate = (self.past_distance - current_distance)
+            reward = first_rate * distance_rate
         else:
             distance_rate = (self.past_distance - current_distance)
-            reward = 500. * distance_rate
+            reward = first_rate * distance_rate
 
         self.past_distance = current_distance
 
