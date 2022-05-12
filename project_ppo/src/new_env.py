@@ -159,10 +159,10 @@ class Env():
                         dif_angs *= -1
                     dif_angulars.append(dif_angs)
                 sum = 0
-                alpha = 0.1
+                alpha = 0.05
                 dif_angulars.sort()
                 for i, diffs in enumerate(dif_angulars):
-                    sum = sum + alpha ** i * (90 - diffs)
+                    sum = sum + alpha ** i * (180 - diffs)
                 distance_rate = (self.past_distance - current_distance)
                 reward = second_rate * distance_rate + sum
             else:

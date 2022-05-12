@@ -16,7 +16,7 @@ from nav_msgs.msg import Odometry
 from std_srvs.srv import Empty
 from gazebo_msgs.srv import SpawnModel, DeleteModel
 # from tf.transformations import euler_from_quaternion
-
+from wall_penalty import pen_wall
 diagonal_dis = math.sqrt(2) * (3.6 + 3.8)
 goal_model_dir = os.path.join(os.path.split(os.path.realpath(__file__))[0], '..', '..', 'turtlebot3_simulations',
                               'turtlebot3_gazebo', 'models', 'Target', 'model.sdf')
@@ -124,12 +124,16 @@ class Env():
 
         return scan_range, current_distance, yaw, rel_theta, diff_angle, done, arrive
 
-    def setReward(self, done, arrive):
-        current_distance = math.hypot(self.goal_position.position.x - self.position.x, self.goal_position.position.y - self.position.y)
-
+    def setReward(self, done, arrive, past_state, new_state):
+        current_distance = math.hypot(self.goal_position.position.x - self.position.x,
+                                      self.goal_position.position.y - self.position.y)
+        past_pen_dis = pen_wall(past_state)
+        current_pen_dis = pen_wall(new_state)
+        wall_rate_pen = past_pen_dis - current_pen_dis
         distance_rate = (self.past_distance - current_distance)
-        print(distance_rate)
-        reward = 500.*distance_rate
+        time_step_pen = 1
+        reward = 500.*distance_rate + 500 * wall_rate_pen - time_step_pen
+        # reward = 500 * wall_rate_pen
         self.past_distance = current_distance
 
         if done:
@@ -150,9 +154,9 @@ class Env():
                 target.model_name = 'target'  # the same with sdf name
                 target.model_xml = goal_urdf
                 self.goal_position.position.x = random.uniform(-3.6, 3.6)
-                self.goal_position.position.x = 3
+                # self.goal_position.position.x = 3
                 self.goal_position.position.y = random.uniform(-3.6, 3.6)
-                self.goal_position.position.y = 0
+                # self.goal_position.position.y = 0
                 while 1.8 <= self.goal_position.position.x <= 2.2 and -1.4 <= self.goal_position.position.y <= 1.4 \
                         or -2.2 <= self.goal_position.position.x <= -1.8 and -1.4 <= self.goal_position.position.y <= 1.4 \
                         or -1.4 <= self.goal_position.position.x <= 1.4 and 1.8 <= self.goal_position.position.y <= 2.2 \
@@ -168,7 +172,7 @@ class Env():
 
         return reward
 
-    def step(self, action, past_action):
+    def step(self, action, past_action, old_state):
         linear_vel = action[0]
         ang_vel = action[1]
 
@@ -186,14 +190,12 @@ class Env():
 
         state, rel_dis, yaw, rel_theta, diff_angle, done, arrive = self.getState(data)
         state = [i / 3.5 for i in state]
-
         for pa in past_action:
             state.append(pa)
-
+        new_state = state[: -2]
         state = state + [rel_dis / diagonal_dis, yaw / 360, rel_theta / 180, diff_angle / 180]
-        reward = self.setReward(done, arrive)
-
-        return np.asarray(state), reward, done, arrive
+        reward = self.setReward(done, arrive, old_state, new_state)
+        return np.asarray(state), reward, done, arrive, new_state
 
     def reset(self):
         # Reset the env #
@@ -213,9 +215,9 @@ class Env():
             target = SpawnModel
             target.model_name = 'target'  # the same with sdf name
             target.model_xml = goal_urdf
-            # self.goal_position.position.x = random.uniform(-3.6, 3.6)
-            # self.goal_position.position.x = random.uniform(-3.6, 3.6)
-            self.goal_position.position.x = 3
+            self.goal_position.position.x = random.uniform(-3.6, 3.6)
+            self.goal_position.position.x = random.uniform(-3.6, 3.6)
+            self.goal_position.position.x = -3
             self.goal_position.position.y = 0
 
             # self.goal_position.position.y = random.uyniform(-3.6, 3.6)
@@ -240,10 +242,10 @@ class Env():
         self.goal_distance = self.getGoalDistace()
         state, rel_dis, yaw, rel_theta, diff_angle, done, arrive = self.getState(data)
         state = [i / 3.5 for i in state]
-
         state.append(0)
         state.append(0)
+        past_state = state[: -2]
 
         state = state + [rel_dis / diagonal_dis, yaw / 360, rel_theta / 360, diff_angle / 180]
 
-        return np.asarray(state)
+        return np.asarray(state), past_state

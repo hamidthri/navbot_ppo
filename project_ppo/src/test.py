@@ -1,7 +1,7 @@
 
 
 import numpy as np
-state = [1, 1, 1, 0, 1, 0, 5, 5, 6, 1, 1, 8, 6, 5, 7, 8, 1, 7, 1, 1]
+state = [1, 1, 1, 0, 2, 0, 5, 5, 1, 0, 0, 8, 6, 5, 7, 8, 0, 7, 1, 1]
 def list_angular(state, num_scan):
     idx = np.where(np.asarray(state)==np.asarray(state).max())[0]
     idx = np.where(np.asarray(state) == 1.0)[0]
@@ -32,19 +32,36 @@ def list_angular(state, num_scan):
         list_ang.append(sum)
     return list_ang
 list_ang = list_angular(state, num_scan=20)
-if len(list_ang) != 0:
-    diff_angle = 10
-    dif_angulars = []
-    for ang in list_ang:
+diff_angle = -100
+if -90 <= diff_angle <= 90:
+    if len(list_ang) != 0:
+        dif_angulars = []
+        for ang in list_ang:
 
-        dif_angs = (90 - diff_angle) - ang
-        if dif_angs < 0:
-            dif_angs *= -1
-        dif_angulars.append(dif_angs)
+            dif_angs = (90 - diff_angle) - ang
+            if dif_angs < 0:
+                dif_angs *= -1
+            dif_angulars.append(dif_angs)
 
-    suma = 0
-    alpha = 0.5
-    dif_angulars.sort()
-    for i, diffs in enumerate(dif_angulars):
-        suma = suma + alpha**i * (90 - diffs)
+        suma = 0
+        alpha = 0.5
+        dif_angulars.sort()
+        emp_list = []
+        emp_list1 = []
+
+        for i, diffs in enumerate(dif_angulars):
+            suma = suma + alpha**i * (180 - diffs)
+            emp_list.append(alpha**i * (180 - diffs))
+            emp_list1.append((180 - diffs))
+
+elif diff_angle > 90:
+    greate_angle = []
+    for elem in list_ang:
+        if elem < 90:
+            greate_angle.append(elem)
+else:
+    less_angle = []
+    for elem in list_ang:
+        if elem > 90:
+            less_angle.append(90 - diff_angle - elem)
 print('a')

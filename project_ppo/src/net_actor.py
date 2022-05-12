@@ -16,7 +16,7 @@ class ResBlock(nn.Module):
     def __init__(self,
                  Fin,
                  Fout,
-                 n_neurons=128):
+                 n_neurons=512):
 
         super(ResBlock, self).__init__()
         self.Fin = Fin

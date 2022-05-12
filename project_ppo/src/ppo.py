@@ -225,59 +225,9 @@ class PPO:
 		batch_rtgs = []
 		batch_lens = []
 
-		# Episodic data. Keeps track of rewards per episode, will get cleared
-		# upon each new episode
-		# episode_rewards = []
-		t = 0 # Keeps track of how many timesteps we've run so far this batch
-		# Keep simulating until we've run more than or equal to specified timesteps per batch
-		# while t < self.timesteps_per_batch:
-		# 	ep_rews = []   # rewards collected per episode
-		#
-		# 	# Reset the environment. sNote that obs is short for observation.
-		# 	obs = self.env.reset()
-		# 	episode_reward = 0
-		# 	done = False
-		# 	one_round = 0
-		# 	# Run an episode for a maximum of max_timesteps_per_episode timesteps
-		# 	# for ep_t in range(self.max_timesteps_per_episode):
-		# 	while True:
-		# 		# If render is specified, render the environment
-		# 		# if self.render and (self.logger['i_so_far'] % self.render_every_i == 0) and len(batch_lens) == 0:
-		# 		# 	self.env.render()
-		# 		t += 1 		# Increment timesteps ran this batch so far
-		#
-		# 		# Track observations in this batch
-		# 		batch_obs.append(obs)
-		# 		# Calculate action and make a step in the env.
-		# 		# Note that rew is short for reward.
-		# 		action, log_prob = self.get_action(obs, t_so_far)
-		# 		obs, rew, done, arrive = self.env.step(action, past_action)
-		# 		past_action = action
-		# 		episode_reward += rew
-		# 		ep_t += 1
-		# 		one_round += 1
-		# 		# Track recent reward, action, and action log probability
-		# 		ep_rews.append(rew)
-		# 		batch_acts.append(action)
-		# 		batch_log_probs.append(log_prob)
-		#
-		# 		# If the environment tells us the episode is terminated, break
-		# 		if arrive:
-		# 			result = 'Success'
-		# 		else:
-		# 			result = 'Fail'
-		# 		if arrive:
-		# 			print('Step: %3i' % one_round, '| avg_reward:{:.2f}'.format(episode_reward/one_round),  '|', result)
-		# 			episode_rewards.append([episode_reward])
-		# 			episode_reward = 0
-		# 			one_round = 0
-		# 			if t >= self.timesteps_per_batch:
-		# 				break
-		# 		if done or one_round >= 500:
-		# 			print('Step: %3i' % one_round, '| avg_reward:{:.2f}'.format(episode_reward/one_round), '|', result)
-		# 			break
 		# Reset the environment. sNote that obs is short for observation.
-		obs = self.env.reset()
+		obs, new_state = self.env.reset()
+		old_state = new_state
 		done = False
 		episode_reward = 0
 		one_round = 0
@@ -291,8 +241,10 @@ class PPO:
 			# Note that rew is short for reward.
 			action, log_prob = self.get_action(obs, t_so_far, one_round)
 			action = [1, 0]
-			# action[1] = action[1] * 2 / 3
-			obs, rew, done, arrive = self.env.step(action, past_action)
+			# old state as input because of reward function
+			obs, rew, done, arrive, new_state = self.env.step(action, past_action, old_state)
+			old_state = new_state
+
 			past_action = action
 			episode_reward += rew
 			# Track recent reward, action, and action log probability
@@ -312,7 +264,8 @@ class PPO:
 				episode_reward = 0
 				one_round = 0
 				done = False
-				obs = self.env.reset()
+				obs, new_state = self.env.reset()
+				old_state = new_state
 			# Run an episode for a maximum of max_timesteps_per_episode timesteps
 			# If render is specified, render the environment
 			# if self.render and (self.logger['i_so_far'] % self.render_every_i == 0) and len(batch_lens) == 0:

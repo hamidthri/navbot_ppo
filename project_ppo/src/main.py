@@ -17,7 +17,7 @@ from environment import Env
 import os, glob
 
 
-state_dim = 26
+state_dim = 57
 action_dim = 2
 action_linear_max = 0.25  # m/s
 action_angular_max = 1  # rad/s

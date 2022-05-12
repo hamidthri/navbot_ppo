@@ -11,11 +11,10 @@ import numpy as np
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class ResBlock(nn.Module):
-
     def __init__(self,
                  Fin,
                  Fout,
-                 n_neurons=256):
+                 n_neurons=512):
 
         super(ResBlock, self).__init__()
         self.Fin = Fin
@@ -24,23 +23,26 @@ class ResBlock(nn.Module):
         self.fc1 = nn.Linear(Fin, n_neurons)
         self.bn1 = nn.BatchNorm1d(n_neurons)
 
-        self.fc2 = nn.Linear(n_neurons, Fout)
-        self.bn2 = nn.BatchNorm1d(Fout)
+        self.fc2 = nn.Linear(n_neurons, n_neurons)
+        self.bn2 = nn.BatchNorm1d(n_neurons)
+
+        self.fc3 = nn.Linear(n_neurons, Fout)
+        self.bn3 = nn.BatchNorm1d(Fout)
 
         if Fin != Fout:
-            self.fc3 = nn.Linear(Fin, Fout)
+            self.fc4 = nn.Linear(Fin, Fout)
 
         self.ll = nn.LeakyReLU(negative_slope=0.2)
 
     def forward(self, x, final_nl=True):
-        Xin = x if self.Fin == self.Fout else self.ll(self.fc3(x))
-
+        Xin = x if self.Fin == self.Fout else self.ll(self.fc4(x))
         Xout = self.fc1(x)  # n_neurons
         # Xout = self.bn1(Xout)
         Xout = self.ll(Xout)
-
         Xout = self.fc2(Xout)
         # Xout = self.bn2(Xout)
+        Xout = self.ll(Xout)
+        Xout = self.fc3(Xout)
         Xout = Xin + Xout
 
         if final_nl:
@@ -76,8 +78,6 @@ class NetCritic(nn.Module):
         # X0 = self.bn1(X)
         X = self.rb1(X0, True)
         X = self.rb2(torch.cat([X0, X], dim=-1), True)
-        # output1 = F.sigmoid(self.out1(X))
-        # output = F.tanh(self.out2(X))
         output = self.out(X)
         # output = torch.cat((output1, output2), -1)
         return output
