@@ -9,8 +9,8 @@ import torch.nn.functional as F
 import numpy as np
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
 class ResBlock(nn.Module):
+
     def __init__(self,
                  Fin,
                  Fout,
@@ -23,32 +23,28 @@ class ResBlock(nn.Module):
         self.fc1 = nn.Linear(Fin, n_neurons)
         self.bn1 = nn.BatchNorm1d(n_neurons)
 
-        self.fc2 = nn.Linear(n_neurons, n_neurons)
-        self.bn2 = nn.BatchNorm1d(n_neurons)
-
-        self.fc3 = nn.Linear(n_neurons, Fout)
-        self.bn3 = nn.BatchNorm1d(Fout)
+        self.fc2 = nn.Linear(n_neurons, Fout)
+        self.bn2 = nn.BatchNorm1d(Fout)
 
         if Fin != Fout:
-            self.fc4 = nn.Linear(Fin, Fout)
+            self.fc3 = nn.Linear(Fin, Fout)
 
         self.ll = nn.LeakyReLU(negative_slope=0.2)
 
     def forward(self, x, final_nl=True):
-        Xin = x if self.Fin == self.Fout else self.ll(self.fc4(x))
+        Xin = x if self.Fin == self.Fout else self.ll(self.fc3(x))
+
         Xout = self.fc1(x)  # n_neurons
         # Xout = self.bn1(Xout)
         Xout = self.ll(Xout)
+
         Xout = self.fc2(Xout)
         # Xout = self.bn2(Xout)
-        Xout = self.ll(Xout)
-        Xout = self.fc3(Xout)
         Xout = Xin + Xout
 
         if final_nl:
             return self.ll(Xout)
         return Xout
-
 
 class NetCritic(nn.Module):
     def __init__(self,
@@ -62,6 +58,7 @@ class NetCritic(nn.Module):
         self.bn1 = nn.BatchNorm1d(in_dim)
         self.rb1 = ResBlock(in_dim, n_neurons)
         self.rb2 = ResBlock(n_neurons + in_dim, n_neurons)
+        self.rb3 = ResBlock(n_neurons + in_dim, n_neurons)
         self.out = nn.Linear(n_neurons, out_dim)
         self.do = nn.Dropout(p=.1, inplace=False)
 
@@ -70,16 +67,13 @@ class NetCritic(nn.Module):
         if isinstance(obs, np.ndarray):
             obs = torch.tensor(obs, dtype=torch.float)
         obs = obs.to(device)
-        # activation1 = F.relu(self.layer1(obs))
-        # activation2 = F.relu(self.layer2(activation1))
 
         X0 = obs
-
         # X0 = self.bn1(X)
         X = self.rb1(X0, True)
         X = self.rb2(torch.cat([X0, X], dim=-1), True)
+        X = self.rb3(torch.cat([X0, X], dim=-1), True)
         output = self.out(X)
-        # output = torch.cat((output1, output2), -1)
         return output
 
 

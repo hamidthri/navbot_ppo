@@ -61,6 +61,7 @@ class NetActor(nn.Module):
         self.bn1 = nn.BatchNorm1d(in_dim)
         self.rb1 = ResBlock(in_dim, n_neurons)
         self.rb2 = ResBlock(n_neurons + in_dim, n_neurons)
+        self.rb3 = ResBlock(n_neurons + in_dim, n_neurons)
 
         self.out1 = nn.Linear(n_neurons, out_dim - 1)
         self.out2 = nn.Linear(n_neurons, out_dim - 1)
@@ -71,14 +72,13 @@ class NetActor(nn.Module):
         if isinstance(obs, np.ndarray):
             obs = torch.tensor(obs, dtype=torch.float)
         obs = obs.to(device)
-        # activation1 = F.relu(self.layer1(obs))
-        # activation2 = F.relu(self.layer2(activation1))
 
         X0 = obs
 
         # X0 = self.bn1(X)
         X = self.rb1(X0, True)
         X = self.rb2(torch.cat([X0, X], dim=-1), True)
+        X = self.rb3(torch.cat([X0, X], dim=-1), True)
 
         output1 = F.sigmoid(self.out1(X))
         output2 = F.tanh(self.out2(X))
