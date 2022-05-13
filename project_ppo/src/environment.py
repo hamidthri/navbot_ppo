@@ -90,7 +90,7 @@ class Env():
             theta = math.pi
         rel_theta = round(math.degrees(theta), 2)
 
-        diff_angle = abs(rel_theta - yaw)
+        # diff_angle = abs(rel_theta - yaw)
         diff_angle = (yaw - rel_theta)
         if 0 <= diff_angle <= 180 or -180 <= diff_angle < 0:
             diff_angle = round(diff_angle, 2)
@@ -137,8 +137,18 @@ class Env():
         current_pen_dis = pen_wall(new_state)
 
         wall_rate_pen = past_pen_dis - current_pen_dis
+
+        norm_dist = 1
+        threshold = 2.
+        if current_distance < threshold:
+            norm_dist = current_distance/threshold
+        elif current_distance < .2:
+            norm_dist = .2/threshold
+
+        # wall_rate_pen = (past_pen_dis - current_pen_dis)
+        wall_rate_pen = - current_pen_dis
         # self.sum1 = self.sum1 + wall_rate_pen
-        distance_rate = (self.past_distance - current_distance)
+        distance_rate = (self.past_distance - current_distance)/norm_dist
         # self.sum2 = self.sum2 + distance_rate
 
         time_step_pen = 0.1
