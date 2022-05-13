@@ -133,25 +133,20 @@ class Env():
         current_pen_dis = pen_wall(new_state)
 
         wall_rate_pen = past_pen_dis - current_pen_dis
-        self.sum1 = self.sum1 + wall_rate_pen
+        # self.sum1 = self.sum1 + wall_rate_pen
         distance_rate = (self.past_distance - current_distance)
         self.sum2 = self.sum2 + distance_rate
 
         time_step_pen = 1
-        reward = 500.*distance_rate + 500 * wall_rate_pen - time_step_pen
+        reward = 5000.*distance_rate + 500. * wall_rate_pen - time_step_pen
         # reward = 500 * wall_rate_pen
         self.past_distance = current_distance
 
         if done:
-            print('wall pen : {}'.format(self.sum1))
-            print('distance rate = {}'.format(self.sum2))
-
             reward = -100.
             self.pub_cmd_vel.publish(Twist())
 
         if arrive:
-            print('wall pen : {}'.format(self.sum1))
-            print('distance rate = {}'.format(self.sum2))
             reward = 120.
             self.pub_cmd_vel.publish(Twist())
             rospy.wait_for_service('/gazebo/delete_model')
@@ -228,8 +223,8 @@ class Env():
             target.model_xml = goal_urdf
             self.goal_position.position.x = random.uniform(-3.6, 3.6)
             self.goal_position.position.x = random.uniform(-3.6, 3.6)
-            self.goal_position.position.x = -1.5
-            self.goal_position.position.y = 0
+            # self.goal_position.position.x = -1.5
+            # self.goal_position.position.y = 0
 
             # self.goal_position.position.y = random.uyniform(-3.6, 3.6)
             while 1.8 <= self.goal_position.position.x <= 2.2 and -1.4 <= self.goal_position.position.y <= 1.4\

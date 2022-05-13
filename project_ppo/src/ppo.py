@@ -18,13 +18,12 @@ import matplotlib.pyplot as plt
 import os, glob
 import torch.nn.functional as F
 
-saver_dir = './models/'
-if not os.path.exists(saver_dir):
-    os.makedirs(saver_dir)
 
-record_dir = 'record'
+record_dir = '../../../record'
 if not os.path.exists(record_dir):
     os.makedirs(record_dir)
+
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
@@ -240,7 +239,6 @@ class PPO:
 			# Calculate action and make a step in the env.
 			# Note that rew is short for reward.
 			action, log_prob = self.get_action(obs, t_so_far, one_round)
-			action = [1, 0]
 			# old state as input because of reward function
 			obs, rew, done, arrive, new_state = self.env.step(action, past_action, old_state)
 			old_state = new_state
@@ -431,7 +429,7 @@ class PPO:
 		self.render_every_i = 10                        # Only render every n iterations
 		self.save_freq = 2                            # How often we save in number of iterations
 		self.seed = None                                # Sets the seed of our program, used for reproducibility of results
-		self.exp_id = 'V07'
+		self.exp_id = 'V01_new_env_r5000_p500_t1'
 
 		# Change any default values to custom values for specified hyperparameters
 		for param, val in hyperparameters.items():
@@ -457,7 +455,7 @@ class PPO:
 
 
 		### create model folder
-		exp_path = f'models/{self.exp_id}'
+		exp_path = f'../../../models/{self.exp_id}'
 		makepath(exp_path)
 		####
 		import yaml

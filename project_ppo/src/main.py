@@ -144,8 +144,8 @@ def main(args):
         'clip': 0.2,
         'render': True,
         'render_every_i': 10,
-        'log_dir': '/home/hamid/repos/planner/catkin_ws/src/project_ppo/src/summary',
-        'exp_id': "V07"
+        'log_dir': '/is/ps2/otaheri/hamid/repos/planner/catkin_ws/src/project_ppo/src/summary',
+        'exp_id': "V01_new_env_r5000_p500_t1"
     }
 
     # Creates the environment we'll be running. If you want to replace with your own
