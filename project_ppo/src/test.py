@@ -4,7 +4,6 @@ import numpy as np
 state = [1, 1, 1, 0, 2, 0, 5, 5, 1, 0, 0, 8, 6, 5, 7, 8, 0, 7, 1, 1]
 def list_angular(state, num_scan):
     idx = np.where(np.asarray(state)==np.asarray(state).max())[0]
-    idx = np.where(np.asarray(state) == 1.0)[0]
     list = []
     j = 0
     inner_list = []

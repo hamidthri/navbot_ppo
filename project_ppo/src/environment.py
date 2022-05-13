@@ -91,11 +91,15 @@ class Env():
         rel_theta = round(math.degrees(theta), 2)
 
         diff_angle = abs(rel_theta - yaw)
-        if diff_angle <= 180:
+        diff_angle = (yaw - rel_theta)
+        if 0 <= diff_angle <= 180 or -180 <= diff_angle < 0:
             diff_angle = round(diff_angle, 2)
+        elif diff_angle < -180:
+            diff_angle = round(360 + diff_angle, 2)
         else:
             diff_angle = round(-360 + diff_angle, 2)
 
+        # print(diff_angle)
         self.rel_theta = rel_theta
         self.yaw = yaw
         self.diff_angle = diff_angle
@@ -135,7 +139,7 @@ class Env():
         wall_rate_pen = past_pen_dis - current_pen_dis
         # self.sum1 = self.sum1 + wall_rate_pen
         distance_rate = (self.past_distance - current_distance)
-        self.sum2 = self.sum2 + distance_rate
+        # self.sum2 = self.sum2 + distance_rate
 
         time_step_pen = 1
         reward = 5000.*distance_rate + 500. * wall_rate_pen - time_step_pen
@@ -223,8 +227,8 @@ class Env():
             target.model_xml = goal_urdf
             self.goal_position.position.x = random.uniform(-3.6, 3.6)
             self.goal_position.position.x = random.uniform(-3.6, 3.6)
-            # self.goal_position.position.x = -1.5
-            # self.goal_position.position.y = 0
+            # self.goal_position.position.x = 1.5
+            # self.goal_position.position.y = -1.5
 
             # self.goal_position.position.y = random.uyniform(-3.6, 3.6)
             while 1.8 <= self.goal_position.position.x <= 2.2 and -1.4 <= self.goal_position.position.y <= 1.4\

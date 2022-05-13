@@ -239,6 +239,7 @@ class PPO:
 			# Calculate action and make a step in the env.
 			# Note that rew is short for reward.
 			action, log_prob = self.get_action(obs, t_so_far, one_round)
+			# action = [0.5, 0]
 			# old state as input because of reward function
 			obs, rew, done, arrive, new_state = self.env.step(action, past_action, old_state)
 			old_state = new_state
@@ -459,7 +460,7 @@ class PPO:
 		makepath(exp_path)
 		####
 		import yaml
-		with open(f'models/{self.exp_id}'+'/config.yml', 'w') as outfile:
+		with open(f'../../../models/{self.exp_id}'+'/config.yml', 'w') as outfile:
 			yaml.dump(conf, outfile, default_flow_style=False)
 
 		# Sets the seed if specified
