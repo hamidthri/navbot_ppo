@@ -141,8 +141,8 @@ class Env():
         distance_rate = (self.past_distance - current_distance)
         # self.sum2 = self.sum2 + distance_rate
 
-        time_step_pen = 1
-        reward = 5000.*distance_rate + 500. * wall_rate_pen - time_step_pen
+        time_step_pen = 0.1
+        reward = 500.*distance_rate + 50. * wall_rate_pen - time_step_pen
         # reward = 500 * wall_rate_pen
         self.past_distance = current_distance
 
