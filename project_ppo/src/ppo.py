@@ -102,6 +102,7 @@ class PPO:
 			'critic_losses': [],
 			'Episode_Rewards': [],
 			'Iteration': 0,
+			'iter': 0,
 		}
 		self.writer = SummaryWriter(log_dir=self.log_dir)
 
@@ -260,6 +261,7 @@ class PPO:
 					print('Step: %3i' % one_round, '| avg_reward:{:.2f}'.format(episode_reward / one_round),
 						  '| Time step: %i' % (t_so_far + np.sum(batch_lens)), '|', result)
 					self.logger['Episode_Rewards'].append(episode_reward / one_round)
+					self.logger_global['iter'] += 1
 				episode_reward = 0
 				one_round = 0
 				done = False
@@ -281,16 +283,18 @@ class PPO:
 				if one_round != 0:
 					print('Step: %3i' % one_round, '| avg_reward:{:.2f}'.format(episode_reward/one_round), '| Time step: %i' % (t_so_far + np.sum(batch_lens)), '|', result)
 					self.logger['Episode_Rewards'].append(episode_reward/one_round)
+					self.logger_global['iter'] += 1
 				episode_reward = 0
 				one_round = 0
 
 		# Track episodic lengths and rewards
 		batch_rews.append(ep_rews)
-		if one_round != 0:
-			print('Step: %3i' % one_round, '| avg_reward:{:.2f}'.format(episode_reward / one_round),
-				  '| Time step: %i' % (t_so_far + np.sum(batch_lens)), '|', result)
+		# if one_round != 0:
+		# 	print('Step: %3i' % one_round, '| avg_reward:{:.2f}'.format(episode_reward / one_round),
+		# 		  '| Time step: %i' % (t_so_far + np.sum(batch_lens)), '|', result)
+		#
+		# 	self.logger['Episode_Rewards'].append(episode_reward / one_round)
 
-			self.logger['Episode_Rewards'].append(episode_reward / one_round)
 		f = open(record_dir + '/ppo' + '.txt', 'a+')
 		for i in self.logger['Episode_Rewards']:
 			f.write(str(i))
@@ -523,7 +527,7 @@ class PPO:
 			self.writer.add_scalar("Critic_loss/train", loss, all_steps - curr_steps + i)
 
 		for i, Reward in enumerate(self.logger['Episode_Rewards']):
-			self.writer.add_scalar("Episode_Rewards/train", Reward, all_steps - curr_steps + i)
+			self.writer.add_scalar("Episode_Rewards/train", Reward, self.logger_global['iter'])
 
 		self.logger_global['Iteration'] += 1
 		self.writer.add_scalar("avg_ep_rews/train", avg_ep_rews, self.logger_global['Iteration'])

@@ -25,7 +25,7 @@ def pen_wall(state_norm):
             rate_penalty = (max_state - value_middle)
         else:
             rate_penalty = 0
-        if (max_state - min_state) >= 0.8:
+        if min_state <= 0.2:
             rate_penalty = rate_penalty + (max_state - min_state)
         else:
             rate_penalty = rate_penalty
