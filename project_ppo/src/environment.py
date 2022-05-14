@@ -133,26 +133,26 @@ class Env():
     def setReward(self, done, arrive, past_state, new_state):
         current_distance = math.hypot(self.goal_position.position.x - self.position.x,
                                       self.goal_position.position.y - self.position.y)
-        past_pen_dis = pen_wall(past_state)
+        # past_pen_dis = pen_wall(past_state)
         current_pen_dis = pen_wall(new_state)
 
-        wall_rate_pen = past_pen_dis - current_pen_dis
+        # wall_rate_pen = past_pen_dis - current_pen_dis
 
-        norm_dist = 1
-        threshold = 2.
-        if current_distance < threshold:
-            norm_dist = current_distance/threshold
-        elif current_distance < .2:
-            norm_dist = .2/threshold
+        # norm_dist = 1
+        # threshold = 2.
+        # if current_distance < threshold:
+        #     norm_dist = current_distance/threshold
+        # elif current_distance < .2:
+        #     norm_dist = .2/threshold
 
         # wall_rate_pen = (past_pen_dis - current_pen_dis)
         wall_rate_pen = - current_pen_dis
         # self.sum1 = self.sum1 + wall_rate_pen
-        distance_rate = (self.past_distance - current_distance)/norm_dist
+        distance_rate = (self.past_distance - current_distance)
         # self.sum2 = self.sum2 + distance_rate
 
-        time_step_pen = 0.1
-        reward = 500.*distance_rate + 50. * wall_rate_pen - time_step_pen
+        time_step_pen = 1
+        reward = 500.*distance_rate + 5. * wall_rate_pen - time_step_pen
         # reward = 500 * wall_rate_pen
         self.past_distance = current_distance
 

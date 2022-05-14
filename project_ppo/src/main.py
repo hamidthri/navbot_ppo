@@ -139,13 +139,13 @@ def main(args):
         'timesteps_per_batch': 8000,
         'max_timesteps_per_episode': 800,
         'gamma': 0.99,
-        'n_updates_per_iteration': 50,
+        'n_updates_per_iteration': 100,
         'lr': 3e-4,
         'clip': 0.2,
         'render': True,
         'render_every_i': 10,
         'log_dir': '',
-        'exp_id': "V02_new_env_r500_p50_t1"
+        'exp_id': "V04_new_env_r500_p5_t1"
     }
     hyperparameters['log_dir'] = '/is/ps2/otaheri/hamid/repos/planner/catkin_ws/src/project_ppo/src/summary/'+hyperparameters['exp_id']
 

@@ -197,8 +197,8 @@ class PPO:
 
 			if i_so_far % self.save_freq == 0:
 				epoch = i_so_far//self.save_freq
-				torch.save(self.actor.state_dict(), f'models/{self.exp_id}/ppo_actor_{epoch}.pth')
-				torch.save(self.critic.state_dict(), f'models/{self.exp_id}/ppo_critic_{epoch}.pth')
+				torch.save(self.actor.state_dict(), f'../../../models/{self.exp_id}/ppo_actor_{epoch}.pth')
+				torch.save(self.critic.state_dict(), f'../../../models/{self.exp_id}/ppo_critic_{epoch}.pth')
 
 	def rollout(self, past_action, t_so_far):
 		"""
@@ -420,7 +420,7 @@ class PPO:
 		# Algorithm hyperparameters
 		self.timesteps_per_batch = 8000               # Number of timesteps to run per batch
 		self.max_timesteps_per_episode = 800          # Max number of timesteps per episode
-		self.n_updates_per_iteration = 50               # Number of times to update actor/critic per iteration
+		self.n_updates_per_iteration = 100               # Number of times to update actor/critic per iteration
 		self.lr = 3e-4                                # Learning rate of actor optimizer
 		self.gamma = 0.99                            # Discount factor to be applied when calculating Rewards-To-Go
 		self.clip = 0.2                                 # Recommended 0.2, helps define the threshold to clip the ratio during SGA
@@ -430,7 +430,7 @@ class PPO:
 		self.render_every_i = 10                        # Only render every n iterations
 		self.save_freq = 2                            # How often we save in number of iterations
 		self.seed = None                                # Sets the seed of our program, used for reproducibility of results
-		self.exp_id = 'V01_new_env_r5000_p500_t1'
+		self.exp_id = 'V04_new_env_r5000_p5_t1'
 
 		# Change any default values to custom values for specified hyperparameters
 		for param, val in hyperparameters.items():
