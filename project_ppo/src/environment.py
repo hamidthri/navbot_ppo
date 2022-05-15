@@ -151,8 +151,8 @@ class Env():
         distance_rate = (self.past_distance - current_distance)
         # self.sum2 = self.sum2 + distance_rate
 
-        time_step_pen = 1
-        reward = 500.*distance_rate + 5. * wall_rate_pen - time_step_pen
+        time_step_pen = 0.5
+        reward = 500.*distance_rate + 10. * wall_rate_pen - time_step_pen
         # reward = 500 * wall_rate_pen
         self.past_distance = current_distance
 
@@ -161,7 +161,7 @@ class Env():
             self.pub_cmd_vel.publish(Twist())
 
         if arrive:
-            reward = 120.
+            reward =120.
             self.pub_cmd_vel.publish(Twist())
             rospy.wait_for_service('/gazebo/delete_model')
             self.del_model('target')
@@ -177,10 +177,10 @@ class Env():
                 # self.goal_position.position.x = 3
                 self.goal_position.position.y = random.uniform(-3.6, 3.6)
                 # self.goal_position.position.y = 0
-                while 1.8 <= self.goal_position.position.x <= 2.2 and -1.4 <= self.goal_position.position.y <= 1.4 \
-                        or -2.2 <= self.goal_position.position.x <= -1.8 and -1.4 <= self.goal_position.position.y <= 1.4 \
-                        or -1.4 <= self.goal_position.position.x <= 1.4 and 1.8 <= self.goal_position.position.y <= 2.2 \
-                        or -1.4 <= self.goal_position.position.x <= 1.4 and -2.2 <= self.goal_position.position.y <= -1.8:
+                while 1.7 <= self.goal_position.position.x <= 2.3 and -1.2 <= self.goal_position.position.y <= 1.2 \
+                        or -2.3 <= self.goal_position.position.x <= -1.7 and -1.2 <= self.goal_position.position.y <= 1.2 \
+                        or -1.2 <= self.goal_position.position.x <= 1.2 and 1.7 <= self.goal_position.position.y <= 2.3 \
+                        or -1.2 <= self.goal_position.position.x <= 1.2 and -2.3 <= self.goal_position.position.y <= -1.7:
                     self.goal_position.position.x = random.uniform(-3.6, 3.6)
                     self.goal_position.position.y = random.uniform(-3.6, 3.6)
                 self.goal(target.model_name, target.model_xml, 'namespace', self.goal_position, 'world')
@@ -236,15 +236,13 @@ class Env():
             target.model_name = 'target'  # the same with sdf name
             target.model_xml = goal_urdf
             self.goal_position.position.x = random.uniform(-3.6, 3.6)
-            self.goal_position.position.x = random.uniform(-3.6, 3.6)
-            # self.goal_position.position.x = 1.5
-            # self.goal_position.position.y = -1.5
-
-            # self.goal_position.position.y = random.uyniform(-3.6, 3.6)
-            while 1.8 <= self.goal_position.position.x <= 2.2 and -1.4 <= self.goal_position.position.y <= 1.4\
-                    or -2.2 <= self.goal_position.position.x <= -1.8 and -1.4 <= self.goal_position.position.y <= 1.4\
-                    or -1.4 <= self.goal_position.position.x <= 1.4 and 1.8 <= self.goal_position.position.y <= 2.2\
-                    or -1.4 <= self.goal_position.position.x <= 1.4 and -2.2 <= self.goal_position.position.y <= -1.8:
+            # self.goal_position.position.x = 3
+            self.goal_position.position.y = random.uniform(-3.6, 3.6)
+            # self.goal_position.position.y = 0
+            while 1.7 <= self.goal_position.position.x <= 2.3 and -1.2 <= self.goal_position.position.y <= 1.2 \
+                    or -2.3 <= self.goal_position.position.x <= -1.7 and -1.2 <= self.goal_position.position.y <= 1.2 \
+                    or -1.2 <= self.goal_position.position.x <= 1.2 and 1.7 <= self.goal_position.position.y <= 2.3 \
+                    or -1.2 <= self.goal_position.position.x <= 1.2 and -2.3 <= self.goal_position.position.y <= -1.7:
                 self.goal_position.position.x = random.uniform(-3.6, 3.6)
                 self.goal_position.position.y = random.uniform(-3.6, 3.6)
 

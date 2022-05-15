@@ -77,7 +77,7 @@ class PPO:
 		self.critic_optim = Adam(self.critic.parameters(), lr=self.lr)
 
 		# Initialize the covariance matrix used to query the actor for actions
-		self.cov_var = torch.full(size=(self.act_dim,), fill_value=0.5).to(device)
+		self.cov_var = torch.full(size=(self.act_dim,), fill_value=1).to(device)
 		self.cov_mat = torch.diag(self.cov_var).to(device)
 
 		# This logger will help us with printing out summaries of each iteration
@@ -434,7 +434,7 @@ class PPO:
 		self.render_every_i = 10                        # Only render every n iterations
 		self.save_freq = 2                            # How often we save in number of iterations
 		self.seed = None                                # Sets the seed of our program, used for reproducibility of results
-		self.exp_id = 'V04_new_env_r5000_p5_t1'
+		self.exp_id = 'V06_new_env_r500_p10_t0.5_var1'
 
 		# Change any default values to custom values for specified hyperparameters
 		for param, val in hyperparameters.items():
