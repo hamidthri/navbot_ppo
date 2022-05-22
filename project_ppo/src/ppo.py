@@ -77,7 +77,7 @@ class PPO:
 		self.critic_optim = Adam(self.critic.parameters(), lr=self.lr)
 
 		# Initialize the covariance matrix used to query the actor for actions
-		self.cov_var = torch.full(size=(self.act_dim,), fill_value=1).to(device)
+		self.cov_var = torch.full(size=(self.act_dim,), fill_value=0.8).to(device)
 		self.cov_mat = torch.diag(self.cov_var).to(device)
 
 		# This logger will help us with printing out summaries of each iteration
@@ -102,7 +102,6 @@ class PPO:
 			'critic_losses': [],
 			'Episode_Rewards': [],
 			'Iteration': 0,
-			'iter': 0,
 		}
 		self.writer = SummaryWriter(log_dir=self.log_dir)
 
@@ -226,7 +225,7 @@ class PPO:
 		batch_lens = []
 
 		# Reset the environment. sNote that obs is short for observation.
-		obs, new_state = self.env.reset()
+		obs, new_state = self.env.reset(t_so_far)
 		old_state = new_state
 		done = False
 		episode_reward = 0
@@ -242,7 +241,7 @@ class PPO:
 			action, log_prob = self.get_action(obs, t_so_far, one_round)
 			# action = [0.5, 0]
 			# old state as input because of reward function
-			obs, rew, done, arrive, new_state = self.env.step(action, past_action, old_state)
+			obs, rew, done, arrive, new_state = self.env.step(action, past_action, old_state, t_so_far)
 			old_state = new_state
 
 			past_action = action
@@ -261,11 +260,10 @@ class PPO:
 					print('Step: %3i' % one_round, '| avg_reward:{:.2f}'.format(episode_reward / one_round),
 						  '| Time step: %i' % (t_so_far + np.sum(batch_lens)), '|', result)
 					self.logger['Episode_Rewards'].append(episode_reward / one_round)
-					self.logger_global['iter'] += 1
 				episode_reward = 0
 				one_round = 0
 				done = False
-				obs, new_state = self.env.reset()
+				obs, new_state = self.env.reset(t_so_far)
 				old_state = new_state
 			# Run an episode for a maximum of max_timesteps_per_episode timesteps
 			# If render is specified, render the environment
@@ -283,7 +281,6 @@ class PPO:
 				if one_round != 0:
 					print('Step: %3i' % one_round, '| avg_reward:{:.2f}'.format(episode_reward/one_round), '| Time step: %i' % (t_so_far + np.sum(batch_lens)), '|', result)
 					self.logger['Episode_Rewards'].append(episode_reward/one_round)
-					self.logger_global['iter'] += 1
 				episode_reward = 0
 				one_round = 0
 
@@ -365,7 +362,7 @@ class PPO:
 		# For more information on how this distribution works, check out Andrew Ng's lecture on it:
 		# https://www.youtube.com/watch?v=JjB58InuTqM
 		if self.t_step % 50 == 0 and t_so_far > 30000 and self.cov_mat[0][0] >= 0.1:
-			self.cov_mat *= 0.95
+			self.cov_mat *= 0.99
 		dist = MultivariateNormal(mean, self.cov_mat)
 
 		# Sample an action from the distribution
@@ -424,7 +421,7 @@ class PPO:
 		# Algorithm hyperparameters
 		self.timesteps_per_batch = 8000               # Number of timesteps to run per batch
 		self.max_timesteps_per_episode = 800          # Max number of timesteps per episode
-		self.n_updates_per_iteration = 100               # Number of times to update actor/critic per iteration
+		self.n_updates_per_iteration = 50               # Number of times to update actor/critic per iteration
 		self.lr = 3e-4                                # Learning rate of actor optimizer
 		self.gamma = 0.99                            # Discount factor to be applied when calculating Rewards-To-Go
 		self.clip = 0.2                                 # Recommended 0.2, helps define the threshold to clip the ratio during SGA
@@ -434,7 +431,7 @@ class PPO:
 		self.render_every_i = 10                        # Only render every n iterations
 		self.save_freq = 2                            # How often we save in number of iterations
 		self.seed = None                                # Sets the seed of our program, used for reproducibility of results
-		self.exp_id = 'V06_new_env_r500_p10_t0.5_var1'
+		self.exp_id = 'V12_new_env_r150_p2_t1_middle_proportion_var1'
 
 		# Change any default values to custom values for specified hyperparameters
 		for param, val in hyperparameters.items():
@@ -526,8 +523,10 @@ class PPO:
 		for i, loss in enumerate(self.logger['critic_losses']):
 			self.writer.add_scalar("Critic_loss/train", loss, all_steps - curr_steps + i)
 
+		all_steps = len(self.logger_global['Episode_Rewards'])
+		curr_steps = len(self.logger['Episode_Rewards'])
 		for i, Reward in enumerate(self.logger['Episode_Rewards']):
-			self.writer.add_scalar("Episode_Rewards/train", Reward, self.logger_global['iter'])
+			self.writer.add_scalar("Episode_Rewards/train", Reward, all_steps - curr_steps + i)
 
 		self.logger_global['Iteration'] += 1
 		self.writer.add_scalar("avg_ep_rews/train", avg_ep_rews, self.logger_global['Iteration'])
@@ -538,3 +537,4 @@ class PPO:
 		self.logger['actor_losses'] = []
 		self.logger['critic_losses'] = []
 		self.logger['Episode_Rewards'] = []
+		# self.logger_global['iter'] = 0

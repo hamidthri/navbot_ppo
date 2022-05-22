@@ -17,7 +17,7 @@ from environment import Env
 import os, glob
 
 
-state_dim = 57
+state_dim = 27
 action_dim = 2
 action_linear_max = 0.25  # m/s
 action_angular_max = 1  # rad/s
@@ -47,8 +47,8 @@ def train(env, hyperparameters, actor_model, critic_model):
     past_action = np.array([0., 0.])
 
     # Tries to load in an existing actor/critic model to continue training on
-    critic_path = sorted(glob.glob(f'models/{agent.exp_id}/ppo_critic_*.pth'))
-    actor_path  = sorted(glob.glob(f'models/{agent.exp_id}/ppo_actor_*.pth'))
+    critic_path = sorted(glob.glob(f'../../../models/{agent.exp_id}/ppo_critic_*.pth'))
+    actor_path  = sorted(glob.glob(f'../../../models/{agent.exp_id}/ppo_actor_*.pth'))
     if critic_path != []:
         print(f"Loading in {actor_path[-1]} and {critic_path[-1]}...", flush=True)
         agent.actor.load_state_dict(torch.load(actor_path[-1]))
@@ -64,7 +64,7 @@ def train(env, hyperparameters, actor_model, critic_model):
     # Train the PPO model with a specified total timesteps
     # NOTE: You can change the total timesteps here, I put a big number just because
     # you can kill the process whenever you feel like PPO is converging
-    agent.learn(total_timesteps=2000000, past_action=past_action)
+    agent.learn(total_timesteps=5000000, past_action=past_action)
     #
 
 def test(env, actor_model):
@@ -139,13 +139,13 @@ def main(args):
         'timesteps_per_batch': 8000,
         'max_timesteps_per_episode': 800,
         'gamma': 0.99,
-        'n_updates_per_iteration': 100,
+        'n_updates_per_iteration': 50,
         'lr': 3e-4,
         'clip': 0.2,
         'render': True,
         'render_every_i': 10,
         'log_dir': '',
-        'exp_id': "V06_new_env_r500_p10_t0.5_just_near_var1"
+        'exp_id': "V12_new_env_r150_p2_t1_middle_proportion_var1"
     }
     hyperparameters['log_dir'] = '/is/ps2/otaheri/hamid/repos/planner/catkin_ws/src/project_ppo/src/summary/'+hyperparameters['exp_id']
 

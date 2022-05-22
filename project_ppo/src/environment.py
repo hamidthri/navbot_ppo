@@ -89,8 +89,11 @@ class Env():
         else:
             theta = math.pi
         rel_theta = round(math.degrees(theta), 2)
-
         # diff_angle = abs(rel_theta - yaw)
+        # if diff_angle <= 180:
+        #     diff_angle = round(diff_angle, 2)
+        # else:
+        #     diff_angle = round(-360 + diff_angle, 2)
         diff_angle = (yaw - rel_theta)
         if 0 <= diff_angle <= 180 or -180 <= diff_angle < 0:
             diff_angle = round(diff_angle, 2)
@@ -130,11 +133,11 @@ class Env():
 
         return scan_range, current_distance, yaw, rel_theta, diff_angle, done, arrive
 
-    def setReward(self, done, arrive, past_state, new_state):
+    def setReward(self, done, arrive, past_state, new_state, t_so_far):
         current_distance = math.hypot(self.goal_position.position.x - self.position.x,
                                       self.goal_position.position.y - self.position.y)
         # past_pen_dis = pen_wall(past_state)
-        current_pen_dis = pen_wall(new_state)
+        current_pen_dis, value_middle = pen_wall(new_state)
 
         # wall_rate_pen = past_pen_dis - current_pen_dis
 
@@ -146,22 +149,28 @@ class Env():
         #     norm_dist = .2/threshold
 
         # wall_rate_pen = (past_pen_dis - current_pen_dis)
-        wall_rate_pen = - current_pen_dis
+        wall_rate_pen = - current_pen_dis * (1 - value_middle)
         # self.sum1 = self.sum1 + wall_rate_pen
-        distance_rate = (self.past_distance - current_distance)
+        if (self.past_distance - current_distance) >= 0:
+            distance_rate = (self.past_distance - current_distance) * (4 * math.sqrt(2) - current_distance)
+        else:
+            distance_rate = (self.past_distance - current_distance) * current_distance
         # self.sum2 = self.sum2 + distance_rate
+        time_step_pen = 1
 
-        time_step_pen = 0.5
-        reward = 500.*distance_rate + 10. * wall_rate_pen - time_step_pen
+        # if -20 <= self.diff_angle <= 20:
+        #     reward = 500. * distance_rate - time_step_pen
+        # else:
+        reward = 200.*distance_rate + 2. * wall_rate_pen - time_step_pen
         # reward = 500 * wall_rate_pen
         self.past_distance = current_distance
 
         if done:
-            reward = -100.
+            reward = -500.
             self.pub_cmd_vel.publish(Twist())
 
         if arrive:
-            reward =120.
+            reward = 500.
             self.pub_cmd_vel.publish(Twist())
             rospy.wait_for_service('/gazebo/delete_model')
             self.del_model('target')
@@ -173,10 +182,16 @@ class Env():
                 target = SpawnModel
                 target.model_name = 'target'  # the same with sdf name
                 target.model_xml = goal_urdf
+                # if t_so_far <= 100000:
+                #     goal_space = [[2, 2], [0, 2.3], [1.7, 0], [1.7, 1.3], [2.3, 1.3], [2, -2], [0, -2.3], [0, 3.6],
+                #                   [-1.7, -1.3], [-2.3, 0], [-1.7, 1.3], [-3.6, 3.6]]
+                #     goal_pos = goal_space[np.random.choice(len(goal_space))]
+                #     self.goal_position.position.x = goal_pos[0]
+                #     self.goal_position.position.y = goal_pos[1]
+                #     self.goal(target.model_name, target.model_xml, 'namespace', self.goal_position, 'world')
+                # else:
                 self.goal_position.position.x = random.uniform(-3.6, 3.6)
-                # self.goal_position.position.x = 3
                 self.goal_position.position.y = random.uniform(-3.6, 3.6)
-                # self.goal_position.position.y = 0
                 while 1.7 <= self.goal_position.position.x <= 2.3 and -1.2 <= self.goal_position.position.y <= 1.2 \
                         or -2.3 <= self.goal_position.position.x <= -1.7 and -1.2 <= self.goal_position.position.y <= 1.2 \
                         or -1.2 <= self.goal_position.position.x <= 1.2 and 1.7 <= self.goal_position.position.y <= 2.3 \
@@ -192,7 +207,7 @@ class Env():
 
         return reward
 
-    def step(self, action, past_action, old_state):
+    def step(self, action, past_action, old_state, t_so_far):
         linear_vel = action[0]
         ang_vel = action[1]
 
@@ -213,11 +228,11 @@ class Env():
         for pa in past_action:
             state.append(pa)
         new_state = state[: -2]
-        state = state + [rel_dis / diagonal_dis, yaw / 360, rel_theta / 180, diff_angle / 180]
-        reward = self.setReward(done, arrive, old_state, new_state)
+        state = state + [rel_dis / diagonal_dis, yaw / 360, rel_theta / 360, diff_angle / 180]
+        reward = self.setReward(done, arrive, old_state, new_state, t_so_far)
         return np.asarray(state), reward, done, arrive, new_state
 
-    def reset(self):
+    def reset(self, t_so_far):
         # Reset the env #
         rospy.wait_for_service('/gazebo/delete_model')
         self.del_model('target')
@@ -235,17 +250,22 @@ class Env():
             target = SpawnModel
             target.model_name = 'target'  # the same with sdf name
             target.model_xml = goal_urdf
+            # if t_so_far <= 100000:
+            #     goal_space = [[2, 2], [0, 2.3], [1.7, 0], [1.7, 1.3], [2.3, 1.3], [2, -2], [0, -2.3], [0, 3.6],
+            #                   [-1.7, -1.3], [-2.3, 0], [-1.7, 1.3], [-3.6, 3.6]]
+            #     goal_pos = goal_space[np.random.choice(len(goal_space))]
+            #     self.goal_position.position.x = goal_pos[0]
+            #     self.goal_position.position.y = goal_pos[1]
+            #     self.goal(target.model_name, target.model_xml, 'namespace', self.goal_position, 'world')
+            # else:
             self.goal_position.position.x = random.uniform(-3.6, 3.6)
-            # self.goal_position.position.x = 3
             self.goal_position.position.y = random.uniform(-3.6, 3.6)
-            # self.goal_position.position.y = 0
             while 1.7 <= self.goal_position.position.x <= 2.3 and -1.2 <= self.goal_position.position.y <= 1.2 \
                     or -2.3 <= self.goal_position.position.x <= -1.7 and -1.2 <= self.goal_position.position.y <= 1.2 \
                     or -1.2 <= self.goal_position.position.x <= 1.2 and 1.7 <= self.goal_position.position.y <= 2.3 \
                     or -1.2 <= self.goal_position.position.x <= 1.2 and -2.3 <= self.goal_position.position.y <= -1.7:
                 self.goal_position.position.x = random.uniform(-3.6, 3.6)
                 self.goal_position.position.y = random.uniform(-3.6, 3.6)
-
             self.goal(target.model_name, target.model_xml, 'namespace', self.goal_position, 'world')
         except (rospy.ServiceException) as e:
             print("/gazebo/failed to build the target")
