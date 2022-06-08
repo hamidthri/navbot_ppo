@@ -145,7 +145,7 @@ def main(args):
         'render': True,
         'render_every_i': 10,
         'log_dir': '',
-        'exp_id': "V12_new_env_r150_p2_t1_middle_proportion_var1"
+        'exp_id': "V14_new_env_r150_p4_t1_middle_proportionsqrt8_var1_500"
     }
     hyperparameters['log_dir'] = '/is/ps2/otaheri/hamid/repos/planner/catkin_ws/src/project_ppo/src/summary/'+hyperparameters['exp_id']
 

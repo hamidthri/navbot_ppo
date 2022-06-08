@@ -361,8 +361,8 @@ class PPO:
 		# Create a distribution with the mean action and std from the covariance matrix above.
 		# For more information on how this distribution works, check out Andrew Ng's lecture on it:
 		# https://www.youtube.com/watch?v=JjB58InuTqM
-		if self.t_step % 50 == 0 and t_so_far > 30000 and self.cov_mat[0][0] >= 0.1:
-			self.cov_mat *= 0.99
+		if self.t_step == 0 and t_so_far > 50000 and self.cov_mat[0][0] >= 0.1:
+			self.cov_mat *= 0.995
 		dist = MultivariateNormal(mean, self.cov_mat)
 
 		# Sample an action from the distribution
@@ -431,7 +431,7 @@ class PPO:
 		self.render_every_i = 10                        # Only render every n iterations
 		self.save_freq = 2                            # How often we save in number of iterations
 		self.seed = None                                # Sets the seed of our program, used for reproducibility of results
-		self.exp_id = 'V12_new_env_r150_p2_t1_middle_proportion_var1'
+		self.exp_id = 'V14_new_env_r150_p4_t1_middle_proportionsqrt8_var1_500'
 
 		# Change any default values to custom values for specified hyperparameters
 		for param, val in hyperparameters.items():

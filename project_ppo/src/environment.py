@@ -17,7 +17,7 @@ from std_srvs.srv import Empty
 from gazebo_msgs.srv import SpawnModel, DeleteModel
 # from tf.transformations import euler_from_quaternion
 from wall_penalty import pen_wall
-diagonal_dis = math.sqrt(2) * (3.6 + 3.8)
+diagonal_dis = math.sqrt(2) * (3.8 + 3.8)
 goal_model_dir = os.path.join(os.path.split(os.path.realpath(__file__))[0], '..', '..', 'turtlebot3_simulations',
                               'turtlebot3_gazebo', 'models', 'Target', 'model.sdf')
 
@@ -149,28 +149,28 @@ class Env():
         #     norm_dist = .2/threshold
 
         # wall_rate_pen = (past_pen_dis - current_pen_dis)
-        wall_rate_pen = - current_pen_dis * (1 - value_middle)
+        wall_rate_pen = - current_pen_dis
         # self.sum1 = self.sum1 + wall_rate_pen
         if (self.past_distance - current_distance) >= 0:
-            distance_rate = (self.past_distance - current_distance) * (4 * math.sqrt(2) - current_distance)
+            distance_rate = (self.past_distance - current_distance) * (1 + (8 * math.sqrt(2) - current_distance)/(8 * math.sqrt(2)))
         else:
-            distance_rate = (self.past_distance - current_distance) * current_distance
+            distance_rate = (self.past_distance - current_distance) * (1 + current_distance/ (8 * math.sqrt(2)))
         # self.sum2 = self.sum2 + distance_rate
         time_step_pen = 1
 
         # if -20 <= self.diff_angle <= 20:
         #     reward = 500. * distance_rate - time_step_pen
         # else:
-        reward = 200.*distance_rate + 2. * wall_rate_pen - time_step_pen
+        reward = 150.*distance_rate + 4. * wall_rate_pen - time_step_pen
         # reward = 500 * wall_rate_pen
         self.past_distance = current_distance
 
         if done:
-            reward = -500.
+            reward = -220.
             self.pub_cmd_vel.publish(Twist())
 
         if arrive:
-            reward = 500.
+            reward = 200.
             self.pub_cmd_vel.publish(Twist())
             rospy.wait_for_service('/gazebo/delete_model')
             self.del_model('target')
