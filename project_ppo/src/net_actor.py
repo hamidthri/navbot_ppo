@@ -59,12 +59,12 @@ class NetActor(nn.Module):
 
 
         self.bn1 = nn.BatchNorm1d(in_dim)
-        self.rb1 = ResBlock(in_dim, n_neurons)
-        self.rb2 = ResBlock(n_neurons + in_dim, n_neurons)
-        self.rb3 = ResBlock(n_neurons + in_dim, n_neurons)
+        self.rb1 = ResBlock(in_dim, in_dim)
+        self.rb2 = ResBlock(in_dim + in_dim, in_dim + in_dim)
+        # self.rb3 = ResBlock(n_neurons + in_dim, n_neurons)
 
-        self.out1 = nn.Linear(n_neurons, out_dim - 1)
-        self.out2 = nn.Linear(n_neurons, out_dim - 1)
+        self.out1 = nn.Linear(in_dim + in_dim, out_dim - 1)
+        self.out2 = nn.Linear(in_dim + in_dim, out_dim - 1)
         self.do = nn.Dropout(p=.1, inplace=False)
 
     def forward(self, obs):
@@ -78,7 +78,7 @@ class NetActor(nn.Module):
         # X0 = self.bn1(X)
         X = self.rb1(X0, True)
         X = self.rb2(torch.cat([X0, X], dim=-1), True)
-        X = self.rb3(torch.cat([X0, X], dim=-1), True)
+        # X = self.rb3(torch.cat([X0, X], dim=-1), True)
 
         output1 = F.sigmoid(self.out1(X))
         output2 = F.tanh(self.out2(X))
