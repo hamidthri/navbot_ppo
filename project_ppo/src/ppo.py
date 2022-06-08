@@ -150,7 +150,11 @@ class PPO:
 			# our advantages and makes convergence much more stable and faster. I added this because
 			# solving some environments was too unstable without it.
 			A_k = (A_k - A_k.mean()) / (A_k.std() + 1e-10)
-
+			weihgts = self.actor.parameters()
+			w1_res1_actor0 = weihgts.gi_frame.f_locals['self'].rb1.fc1.weight
+			w2_res1_actor0 = weihgts.gi_frame.f_locals['self'].rb1.fc2.weight
+			w1_res2_actor0 = weihgts.gi_frame.f_locals['self'].rb2.fc1.weight
+			w2_res2_actor0 = weihgts.gi_frame.f_locals['self'].rb2.fc2.weight
 			# This is the loop where we update our network for some n epochs
 			for _ in range(self.n_updates_per_iteration):                                                       # ALG STEP 6 & 7
 				# Calculate V_phi and pi_theta(a_t | s_t)
@@ -175,6 +179,8 @@ class PPO:
 				# performance function maximizes it.
 				actor_loss = (-torch.min(surr1, surr2)).mean()
 				critic_loss = nn.MSELoss()(self.V, batch_rtgs)
+				# weihgts = self.actor.parameters()
+				# w1_res1_actor0 = weihgts.gi_frame.f_locals['self'].rb1.fc1.weight
 
 				# Calculate gradients and perform backward propagation for actor network
 				self.actor_optim.zero_grad()
@@ -192,7 +198,15 @@ class PPO:
 
 			# Print a summary of our training so far
 			self._log_summary()
-
+			weihgts = self.actor.parameters()
+			w1_res1_actor = weihgts.gi_frame.f_locals['self'].rb1.fc1.weight
+			w2_res1_actor = weihgts.gi_frame.f_locals['self'].rb1.fc2.weight
+			w1_res2_actor = weihgts.gi_frame.f_locals['self'].rb2.fc1.weight
+			w2_res2_actor = weihgts.gi_frame.f_locals['self'].rb2.fc2.weight
+			deltaw1 = w1_res1_actor - w1_res1_actor0
+			deltaw2 = w2_res1_actor - w2_res1_actor0
+			deltaw3 = w1_res2_actor - w1_res2_actor0
+			deltaw4 = w2_res2_actor - w2_res2_actor0
 			# Save our model if it's time
 
 			if i_so_far % self.save_freq == 0:
@@ -419,8 +433,8 @@ class PPO:
 		"""
 		# Initialize default values for hyperparameters
 		# Algorithm hyperparameters
-		self.timesteps_per_batch = 8000               # Number of timesteps to run per batch
-		self.max_timesteps_per_episode = 800          # Max number of timesteps per episode
+		self.timesteps_per_batch = 5               # Number of timesteps to run per batch
+		self.max_timesteps_per_episode = 2          # Max number of timesteps per episode
 		self.n_updates_per_iteration = 50               # Number of times to update actor/critic per iteration
 		self.lr = 3e-4                                # Learning rate of actor optimizer
 		self.gamma = 0.99                            # Discount factor to be applied when calculating Rewards-To-Go

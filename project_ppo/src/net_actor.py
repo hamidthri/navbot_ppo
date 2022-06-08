@@ -7,7 +7,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 import numpy as np
-
+import math
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
@@ -23,9 +23,11 @@ class ResBlock(nn.Module):
         self.Fout = Fout
 
         self.fc1 = nn.Linear(Fin, n_neurons)
+        nn.init.uniform_(self.fc1.weight, -1 / math.sqrt(Fin), 1 / math.sqrt(Fin))
         self.bn1 = nn.BatchNorm1d(n_neurons)
 
         self.fc2 = nn.Linear(n_neurons, Fout)
+        nn.init.uniform_(self.fc2.weight, -1 / math.sqrt(n_neurons), 1 / math.sqrt(n_neurons))
         self.bn2 = nn.BatchNorm1d(Fout)
 
         if Fin != Fout:
@@ -64,7 +66,9 @@ class NetActor(nn.Module):
         # self.rb3 = ResBlock(n_neurons + in_dim, n_neurons)
 
         self.out1 = nn.Linear(in_dim + in_dim, out_dim - 1)
+        nn.init.uniform_(self.out1.weight, -1 / math.sqrt(in_dim), 1 / math.sqrt(in_dim))
         self.out2 = nn.Linear(in_dim + in_dim, out_dim - 1)
+        nn.init.uniform_(self.out2.weight, -1 / math.sqrt(in_dim + in_dim), 1 / math.sqrt(in_dim + in_dim))
         self.do = nn.Dropout(p=.1, inplace=False)
 
     def forward(self, obs):
