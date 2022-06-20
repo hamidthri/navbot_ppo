@@ -17,7 +17,7 @@ from environment import Env
 import os, glob
 
 
-state_dim = 27
+state_dim = 66
 action_dim = 2
 action_linear_max = 0.25  # m/s
 action_angular_max = 1  # rad/s
@@ -136,8 +136,8 @@ def main(args):
     # ArgumentParser because it's too annoying to type them every time at command line. Instead, you can change them here.
     # To see a list of hyperparameters, look in ppo.py at function _init_hyperparameters
     hyperparameters = {
-        'timesteps_per_batch': 5,
-        'max_timesteps_per_episode': 2,
+        'timesteps_per_batch': 8000,
+        'max_timesteps_per_episode': 800,
         'gamma': 0.99,
         'n_updates_per_iteration': 50,
         'lr': 3e-4,
@@ -145,9 +145,9 @@ def main(args):
         'render': True,
         'render_every_i': 10,
         'log_dir': '',
-        'exp_id': "V14_new_env_r150_p4_t1_middle_proportionsqrt8_var1_500"
+        'exp_id': "v02_simple_env_60_reward_proportion"
     }
-    hyperparameters['log_dir'] = '/home/hamid/repos/planner/catkin_ws/src/project_ppo/src/summary/'+hyperparameters['exp_id']
+    hyperparameters['log_dir'] = '/is/ps2/otaheri/hamid/repos/planner/catkin_ws/src/project_ppo/src/summary/'+hyperparameters['exp_id']
 
     # Creates the environment we'll be running. If you want to replace with your own
     # custom environment, note that it must inherit Gym and have both continuous

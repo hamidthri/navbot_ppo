@@ -238,8 +238,7 @@ class PPO:
         batch_lens = []
 
         # Reset the environment. sNote that obs is short for observation.
-        obs, new_state = self.env.reset(t_so_far)
-        old_state = new_state
+        obs = self.env.reset(t_so_far)
         done = False
         episode_reward = 0
         one_round = 0
@@ -254,8 +253,7 @@ class PPO:
             action, log_prob = self.get_action(obs, t_so_far, one_round)
             # action = [0.5, 0]
             # old state as input because of reward function
-            obs, rew, done, arrive, new_state = self.env.step(action, past_action, old_state, t_so_far)
-            old_state = new_state
+            obs, rew, done, arrive = self.env.step(action, past_action)
 
             past_action = action
             episode_reward += rew
@@ -276,8 +274,7 @@ class PPO:
                 episode_reward = 0
                 one_round = 0
                 done = False
-                obs, new_state = self.env.reset(t_so_far)
-                old_state = new_state
+                obs = self.env.reset(t_so_far)
             # Run an episode for a maximum of max_timesteps_per_episode timesteps
             # If render is specified, render the environment
             # if self.render and (self.logger['i_so_far'] % self.render_every_i == 0) and len(batch_lens) == 0:
@@ -433,8 +430,8 @@ class PPO:
 		"""
         # Initialize default values for hyperparameters
         # Algorithm hyperparameters
-        self.timesteps_per_batch = 5  # Number of timesteps to run per batch
-        self.max_timesteps_per_episode = 2  # Max number of timesteps per episode
+        self.timesteps_per_batch = 8000  # Number of timesteps to run per batch
+        self.max_timesteps_per_episode = 800  # Max number of timesteps per episode
         self.n_updates_per_iteration = 50  # Number of times to update actor/critic per iteration
         self.lr = 3e-4  # Learning rate of actor optimizer
         self.gamma = 0.99  # Discount factor to be applied when calculating Rewards-To-Go
@@ -445,7 +442,7 @@ class PPO:
         self.render_every_i = 10  # Only render every n iterations
         self.save_freq = 2  # How often we save in number of iterations
         self.seed = None  # Sets the seed of our program, used for reproducibility of results
-        self.exp_id = 'V14_new_env_r150_p4_t1_middle_proportionsqrt8_var1_500'
+        self.exp_id = 'v02_simple_env_60_proportion'
 
         # Change any default values to custom values for specified hyperparameters
         for param, val in hyperparameters.items():
