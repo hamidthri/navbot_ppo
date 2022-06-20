@@ -15,7 +15,7 @@ from sensor_msgs.msg import Image
 from nav_msgs.msg import Odometry
 from std_srvs.srv import Empty
 from gazebo_msgs.srv import SpawnModel, DeleteModel
-from pick_laser import Pick
+# from pick_laser import Pick
 # from tf.transformations import euler_from_quaternion
 from wall_penalty import pen_wall
 diagonal_dis = math.sqrt(2) * (3.8 + 3.8)
