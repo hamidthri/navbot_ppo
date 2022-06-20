@@ -44,13 +44,6 @@ class Env():
         else:
             self.threshold_arrive = 0.4
 
-    # def close(self):
-    #     """
-    #     Close environment. No other method calls possible afterwards.
-    #     """
-    #     self.roslaunch.shutdown()
-    #     time.sleep(10)
-
     def getGoalDistace(self):
         goal_distance = math.hypot(self.goal_position.position.x - self.position.x, self.goal_position.position.y - self.position.y)
         self.past_distance = goal_distance
@@ -197,10 +190,10 @@ class Env():
         for pa in past_action:
             state.append(pa)
         state = state + [rel_dis / diagonal_dis, yaw / 360, rel_theta / 360, diff_angle / 180]
-        reward = self.setReward(done, new_state)
-        return np.asarray(state), reward, done, arrive, new_state
+        reward = self.setReward(done, arrive)
+        return np.asarray(state), reward, done, arrive
 
-    def reset(self, t_so_far):
+    def reset(self):
         # Reset the env #
         rospy.wait_for_service('/gazebo/delete_model')
         self.del_model('target')
@@ -234,10 +227,8 @@ class Env():
         self.goal_distance = self.getGoalDistace()
         state, rel_dis, yaw, rel_theta, diff_angle, done, arrive = self.getState(data)
         state = [i / 3.5 for i in state]
-        state.append(0)
-        state.append(0)
         state = Pick(state, len_batch)
-
+        state.append(0)
+        state.append(0)
         state = state + [rel_dis / diagonal_dis, yaw / 360, rel_theta / 360, diff_angle / 180]
-
-        return np.asarray(state), past_state
+        return np.asarray(state)

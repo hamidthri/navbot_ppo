@@ -13,7 +13,7 @@ from eval_policy import eval_policy
 import rospy
 import numpy as np
 
-from environment_new import Env
+from environment_old import Env
 import os, glob
 
 

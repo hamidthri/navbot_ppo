@@ -195,7 +195,6 @@ class Env():
         state = Pick(state, len_batch)
         for pa in past_action:
             state.append(pa)
-        # new_state = state[: -2]
         state = state + [rel_dis / diagonal_dis, yaw / 360, rel_theta / 360, diff_angle / 180]
         reward = self.setReward(done, arrive)
         return np.asarray(state), reward, done, arrive
