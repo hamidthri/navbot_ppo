@@ -147,7 +147,7 @@ def main(args):
         'log_dir': '',
         'exp_id': "v02_simple_env_60_reward_proportion"
     }
-    hyperparameters['log_dir'] = '/is/ps2/otaheri/hamid/repos/planner/catkin_ws/src/project_ppo/src/summary/'+hyperparameters['exp_id']
+    hyperparameters['log_dir'] = '/home/hamid/repos/planner/catkin_ws/src/project_ppo/src/summary/'+hyperparameters['exp_id']
 
     # Creates the environment we'll be running. If you want to replace with your own
     # custom environment, note that it must inherit Gym and have both continuous

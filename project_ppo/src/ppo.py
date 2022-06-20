@@ -238,7 +238,7 @@ class PPO:
         batch_lens = []
 
         # Reset the environment. sNote that obs is short for observation.
-        obs = self.env.reset(t_so_far)
+        obs = self.env.reset()
         done = False
         episode_reward = 0
         one_round = 0
@@ -274,7 +274,7 @@ class PPO:
                 episode_reward = 0
                 one_round = 0
                 done = False
-                obs = self.env.reset(t_so_far)
+                obs = self.env.reset()
             # Run an episode for a maximum of max_timesteps_per_episode timesteps
             # If render is specified, render the environment
             # if self.render and (self.logger['i_so_far'] % self.render_every_i == 0) and len(batch_lens) == 0:

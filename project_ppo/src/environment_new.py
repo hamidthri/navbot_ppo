@@ -15,7 +15,7 @@ from sensor_msgs.msg import Image
 from nav_msgs.msg import Odometry
 from std_srvs.srv import Empty
 from gazebo_msgs.srv import SpawnModel, DeleteModel
-# from pick_laser import Pick
+from pick_laser import Pick
 # from tf.transformations import euler_from_quaternion
 from wall_penalty import pen_wall
 diagonal_dis = math.sqrt(2) * (3.8 + 3.8)
@@ -61,7 +61,6 @@ class Env():
         self.position = odom.pose.pose.position
         orientation = odom.pose.pose.orientation
         q_x, q_y, q_z, q_w = orientation.x, orientation.y, orientation.z, orientation.w
-        # roll, pich, yaw = tf.transformations.euler_from_quaternion(q_x, q_y, q_z, q_w)
         yaw = round(math.degrees(math.atan2(2 * (q_x * q_y + q_w * q_z), 1 - 2 * (q_y * q_y + q_z * q_z))))
 
         if yaw >= 0:
@@ -160,10 +159,10 @@ class Env():
                 target.model_xml = goal_urdf
                 self.goal_position.position.x = random.uniform(-3.6, 3.6)
                 self.goal_position.position.y = random.uniform(-3.6, 3.6)
-                while 1.7 <= self.goal_position.position.x <= 2.3 and -1.2 <= self.goal_position.position.y <= 1.2 \
-                        or -2.3 <= self.goal_position.position.x <= -1.7 and -1.2 <= self.goal_position.position.y <= 1.2 \
-                        or -1.2 <= self.goal_position.position.x <= 1.2 and 1.7 <= self.goal_position.position.y <= 2.3 \
-                        or -1.2 <= self.goal_position.position.x <= 1.2 and -2.3 <= self.goal_position.position.y <= -1.7:
+                while 1.6 <= self.goal_position.position.x <= 2.4 and -1.4 <= self.goal_position.position.y <= 1.4 \
+                        or -2.4 <= self.goal_position.position.x <= -1.6 and -1.4 <= self.goal_position.position.y <= 1.4 \
+                        or -1.4 <= self.goal_position.position.x <= 1.4 and 1.6 <= self.goal_position.position.y <= 2.4 \
+                        or -1.4 <= self.goal_position.position.x <= 1.4 and -2.4 <= self.goal_position.position.y <= -1.6:
                     self.goal_position.position.x = random.uniform(-3.6, 3.6)
                     self.goal_position.position.y = random.uniform(-3.6, 3.6)
                 self.goal(target.model_name, target.model_xml, 'namespace', self.goal_position, 'world')
@@ -219,14 +218,7 @@ class Env():
             target = SpawnModel
             target.model_name = 'target'  # the same with sdf name
             target.model_xml = goal_urdf
-            # if t_so_far <= 100000:
-            #     goal_space = [[2, 2], [0, 2.3], [1.7, 0], [1.7, 1.3], [2.3, 1.3], [2, -2], [0, -2.3], [0, 3.6],
-            #                   [-1.7, -1.3], [-2.3, 0], [-1.7, 1.3], [-3.6, 3.6]]
-            #     goal_pos = goal_space[np.random.choice(len(goal_space))]
-            #     self.goal_position.position.x = goal_pos[0]
-            #     self.goal_position.position.y = goal_pos[1]
-            #     self.goal(target.model_name, target.model_xml, 'namespace', self.goal_position, 'world')
-            # else:
+
             self.goal_position.position.x = random.uniform(-3.6, 3.6)
             self.goal_position.position.y = random.uniform(-3.6, 3.6)
             while 1.7 <= self.goal_position.position.x <= 2.3 and -1.2 <= self.goal_position.position.y <= 1.2 \
@@ -252,8 +244,6 @@ class Env():
         state = Pick(state, len_batch)
         state.append(0)
         state.append(0)
-        #past_state = state[: -2]
-
         state = state + [rel_dis / diagonal_dis, yaw / 360, rel_theta / 360, diff_angle / 180]
 
         return np.asarray(state)
