@@ -158,14 +158,6 @@ class Env():
                 target = SpawnModel
                 target.model_name = 'target'  # the same with sdf name
                 target.model_xml = goal_urdf
-                # if t_so_far <= 100000:
-                #     goal_space = [[2, 2], [0, 2.3], [1.7, 0], [1.7, 1.3], [2.3, 1.3], [2, -2], [0, -2.3], [0, 3.6],
-                #                   [-1.7, -1.3], [-2.3, 0], [-1.7, 1.3], [-3.6, 3.6]]
-                #     goal_pos = goal_space[np.random.choice(len(goal_space))]
-                #     self.goal_position.position.x = goal_pos[0]
-                #     self.goal_position.position.y = goal_pos[1]
-                #     self.goal(target.model_name, target.model_xml, 'namespace', self.goal_position, 'world')
-                # else:
                 self.goal_position.position.x = random.uniform(-3.6, 3.6)
                 self.goal_position.position.y = random.uniform(-3.6, 3.6)
                 while 1.7 <= self.goal_position.position.x <= 2.3 and -1.2 <= self.goal_position.position.y <= 1.2 \

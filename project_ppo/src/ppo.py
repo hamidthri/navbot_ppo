@@ -442,7 +442,7 @@ class PPO:
         self.render_every_i = 10  # Only render every n iterations
         self.save_freq = 2  # How often we save in number of iterations
         self.seed = None  # Sets the seed of our program, used for reproducibility of results
-        self.exp_id = 'v02_simple_env_60_proportion'
+        self.exp_id = 'v02_simple_env_60_reward_proportion'
 
         # Change any default values to custom values for specified hyperparameters
         for param, val in hyperparameters.items():
