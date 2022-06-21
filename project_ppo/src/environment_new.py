@@ -89,11 +89,6 @@ class Env():
         else:
             theta = math.pi
         rel_theta = round(math.degrees(theta), 2)
-        # diff_angle = abs(rel_theta - yaw)
-        # if diff_angle <= 180:
-        #     diff_angle = round(diff_angle, 2)
-        # else:
-        #     diff_angle = round(-360 + diff_angle, 2)
         diff_angle = (yaw - rel_theta)
         if 0 <= diff_angle <= 180 or -180 <= diff_angle < 0:
             diff_angle = round(diff_angle, 2)
