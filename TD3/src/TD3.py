@@ -12,26 +12,20 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class Actor(nn.Module):
-	def __init__(self, state_dim, action_dim, max_action_linear, max_action_angular):
+	def __init__(self, state_dim, action_dim, max_action):
 		super(Actor, self).__init__()
 
 		self.l1 = nn.Linear(state_dim, 256)
 		self.l2 = nn.Linear(256, 256)
-		self.l3 = nn.Linear(256, action_dim-1)
-		self.l4 = nn.Linear(256, action_dim-1)
-
-		self.max_action_linear = max_action_linear
-		self.max_action_angular = max_action_angular
-
+		self.l3 = nn.Linear(256, action_dim)
+		
+		self.max_action = max_action
+		
 
 	def forward(self, state):
 		a = F.relu(self.l1(state))
 		a = F.relu(self.l2(a))
-		a1 = self.max_action_linear * torch.sigmoid(self.l3(a))
-		a2 = self.max_action_angular * torch.tanh(self.l4(a))
-		a = torch.cat((a1, a2), -1)
-
-		return a
+		return self.max_action * torch.tanh(self.l3(a))
 
 
 class Critic(nn.Module):
@@ -76,18 +70,15 @@ class TD3(object):
 		self,
 		state_dim,
 		action_dim,
-		max_action_linear,
-		max_action_angular,
+		max_action,
 		discount=0.99,
 		tau=0.005,
-		policy_noise_linear=0.2,
-		policy_noise_angular=0.2,
-		noise_clip_linear=0.5,
-		noise_clip_angular=0.5,
+		policy_noise=0.2,
+		noise_clip=0.5,
 		policy_freq=2
 	):
 
-		self.actor = Actor(state_dim, action_dim, max_action_linear, max_action_angular).to(device)
+		self.actor = Actor(state_dim, action_dim, max_action).to(device)
 		self.actor_target = copy.deepcopy(self.actor)
 		self.actor_optimizer = torch.optim.Adam(self.actor.parameters(), lr=3e-4)
 
@@ -95,14 +86,11 @@ class TD3(object):
 		self.critic_target = copy.deepcopy(self.critic)
 		self.critic_optimizer = torch.optim.Adam(self.critic.parameters(), lr=3e-4)
 
-		self.max_action_linear = max_action_linear
-		self.max_action_angular = max_action_angular
+		self.max_action = max_action
 		self.discount = discount
 		self.tau = tau
-		self.policy_noise_linear = policy_noise_linear
-		self.policy_noise_angular = policy_noise_angular
-		self.noise_clip_linear = noise_clip_linear
-		self.noise_clip_angular = noise_clip_angular
+		self.policy_noise = policy_noise
+		self.noise_clip = noise_clip
 		self.policy_freq = policy_freq
 
 		self.total_it = 0
@@ -113,7 +101,7 @@ class TD3(object):
 		return self.actor(state).cpu().data.numpy().flatten()
 
 
-	def train(self, replay_buffer, batch_size=8):
+	def train(self, replay_buffer, batch_size=256):
 		self.total_it += 1
 
 		# Sample replay buffer 
@@ -121,21 +109,14 @@ class TD3(object):
 
 		with torch.no_grad():
 			# Select action according to policy and add clipped noise
-			noise_linear = (
-				torch.randn_like(action[:, 0]) * self.policy_noise_linear
-			).clamp(-self.noise_clip_linear, self.noise_clip_linear)
-			noise_angular = (
-					torch.randn_like(action[:, 1]) * self.policy_noise_angular
-			).clamp(-self.noise_clip_angular, self.noise_clip_angular)
-			next_action_linear = (
-				self.actor_target(next_state)[:, 0] + noise_linear
-			).clamp(-self.max_action_linear, self.max_action_linear)
+			noise = (
+				torch.randn_like(action) * self.policy_noise
+			).clamp(-self.noise_clip, self.noise_clip)
+			
+			next_action = (
+				self.actor_target(next_state) + noise
+			).clamp(-self.max_action, self.max_action)
 
-			next_action_angular = (
-					self.actor_target(next_state)[:, 1] + noise_linear
-			).clamp(-self.max_action_angular, self.max_action_angular)
-			next_action = torch.cat((next_action_linear, next_action_angular), 0)
-			next_action = torch.reshape(next_action, (batch_size, 2))
 			# Compute the target Q value
 			target_Q1, target_Q2 = self.critic_target(next_state, next_action)
 			target_Q = torch.min(target_Q1, target_Q2)

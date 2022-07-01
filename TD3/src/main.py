@@ -1,5 +1,6 @@
 import numpy as np
 import torch
+import gym
 import argparse
 import os
 
@@ -7,27 +8,22 @@ import utils
 import TD3
 import OurDDPG
 import DDPG
-from environment import Env
-import rospy
 
-is_training = True
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Runs policy for X episodes and returns average reward
 # A fixed seed is used for the eval environment
-def eval_policy(policy,past_action, env,time_step, eval_episodes=10):
-	eval_env = env
+def eval_policy(policy, env_name, seed, eval_episodes=10):
+	eval_env = gym.make(env_name)
+	eval_env.seed(seed + 100)
+
 	avg_reward = 0.
 	for _ in range(eval_episodes):
-		state = eval_env.reset()
-		done = False
-		i = 0
-		while (not done and i <= time_step):
+		state, done = eval_env.reset(), False
+		while not done:
 			action = policy.select_action(np.array(state))
-			state, reward, done, arrive = eval_env.step(action, past_action)
-			past_action = action
+			state, reward, done, _ = eval_env.step(action)
 			avg_reward += reward
-			i += 1
+
 	avg_reward /= eval_episodes
 
 	print("---------------------------------------")
@@ -56,9 +52,9 @@ if __name__ == "__main__":
 	parser.add_argument("--load_model", default="")                 # Model load file name, "" doesn't load, "default" uses file_name
 	args = parser.parse_args()
 
-	file_name = f"{args.policy}"
+	file_name = f"{args.policy}_{args.env}_{args.seed}"
 	print("---------------------------------------")
-	print(f"Policy: {args.policy}")
+	print(f"Policy: {args.policy}, Env: {args.env}, Seed: {args.seed}")
 	print("---------------------------------------")
 
 	if not os.path.exists("./results"):
@@ -66,31 +62,23 @@ if __name__ == "__main__":
 
 	if args.save_model and not os.path.exists("./models"):
 		os.makedirs("./models")
-	rospy.init_node('ppo_stage_1')
 
-	# env = gym.make(args.env)
-	env = Env(is_training)
+	env = gym.make(args.env)
 
 	# Set seeds
-	# env.seed(args.seed)
-	# env.action_space.seed(args.seed)
-	# torch.manual_seed(args.seed)
-	# np.random.seed(args.seed)
-
-	# state_dim = env.observation_space.shape[0]
-	# action_dim = env.action_space.shape[0]
-	state_dim = 66
-	action_dim = 2
-	time_step = 800
-	action_linear_max = 1  # m/s
-	action_angular_max = 1  # rad/s
-	# max_action = float(env.action_space.high[0])
+	env.seed(args.seed)
+	env.action_space.seed(args.seed)
+	torch.manual_seed(args.seed)
+	np.random.seed(args.seed)
+	
+	state_dim = env.observation_space.shape[0]
+	action_dim = env.action_space.shape[0] 
+	max_action = float(env.action_space.high[0])
 
 	kwargs = {
 		"state_dim": state_dim,
 		"action_dim": action_dim,
-		"max_action_linear": action_linear_max,
-		"max_action_angular": action_angular_max,
+		"max_action": max_action,
 		"discount": args.discount,
 		"tau": args.tau,
 	}
@@ -98,10 +86,8 @@ if __name__ == "__main__":
 	# Initialize policy
 	if args.policy == "TD3":
 		# Target policy smoothing is scaled wrt the action scale
-		kwargs["policy_noise_linear"] = args.policy_noise * action_linear_max
-		kwargs["policy_noise_angular"] = args.policy_noise * action_angular_max
-		kwargs["noise_clip_linear"] = args.noise_clip * action_linear_max
-		kwargs["noise_clip_angular"] = args.noise_clip * action_angular_max
+		kwargs["policy_noise"] = args.policy_noise * max_action
+		kwargs["noise_clip"] = args.noise_clip * max_action
 		kwargs["policy_freq"] = args.policy_freq
 		policy = TD3.TD3(**kwargs)
 	elif args.policy == "OurDDPG":
@@ -114,71 +100,53 @@ if __name__ == "__main__":
 		policy.load(f"./models/{policy_file}")
 
 	replay_buffer = utils.ReplayBuffer(state_dim, action_dim)
-	past_action = np.array([0., 0.])
-
+	
 	# Evaluate untrained policy
-	evaluations = [eval_policy(policy, past_action, env, time_step)]
+	evaluations = [eval_policy(policy, args.env, args.seed)]
 
-	# state, done = env.reset(), False
+	state, done = env.reset(), False
 	episode_reward = 0
 	episode_timesteps = 0
 	episode_num = 0
-	action = np.array([0., 0.])
-	done = False
-	state = env.reset()
-	t_s = 0
+
 	for t in range(int(args.max_timesteps)):
 		
 		episode_timesteps += 1
 
 		# Select action randomly or according to policy
-		# if t < args.start_timesteps:
-		# 	action = env.action_space.sample()
-		# else:
-		action = action.tolist()
-		action[0] = (
-			policy.select_action(np.array(state))[0] + np.random.normal(0, action_linear_max * args.expl_noise, size=action_dim-1)
-		).clip(0, action_linear_max)
-		action[1] = (
-			policy.select_action(np.array(state))[1] + np.random.normal(0, action_angular_max * args.expl_noise, size=action_dim-1)).clip(-action_angular_max, action_angular_max)
-		action = np.asarray(action).squeeze()
-		# Perform action
-		next_state, reward, done, arrive = env.step(action, past_action)
-		# done_bool = float(done) if episode_timesteps < env._max_episode_steps else 0
-		if arrive:
-			result = 'Success'
+		if t < args.start_timesteps:
+			action = env.action_space.sample()
 		else:
-			result = 'Fail'
+			action = (
+				policy.select_action(np.array(state))
+				+ np.random.normal(0, max_action * args.expl_noise, size=action_dim)
+			).clip(-max_action, max_action)
+
+		# Perform action
+		next_state, reward, done, _ = env.step(action) 
+		done_bool = float(done) if episode_timesteps < env._max_episode_steps else 0
+
 		# Store data in replay buffer
-		replay_buffer.add(state, action, next_state, reward, done)
+		replay_buffer.add(state, action, next_state, reward, done_bool)
 
 		state = next_state
 		episode_reward += reward
+
 		# Train agent after collecting sufficient data
-		t_s += 1
-		if arrive:
+		if t >= args.start_timesteps:
+			policy.train(replay_buffer, args.batch_size)
+
+		if done: 
 			# +1 to account for 0 indexing. +0 on ep_timesteps since it will increment +1 even if done=True
-			print(f"Total T: {t+1} Episode Num: {episode_num+1} Episode T: {episode_timesteps} Reward: {episode_reward:.3f} Result: {result}")
-			# Reset environment
-			episode_reward = 0
-			episode_timesteps = 0
-			episode_num += 1
-			t_s = 0
-		if done or t_s >= time_step:
-			# +1 to account for 0 indexing. +0 on ep_timesteps since it will increment +1 even if done=True
-			print(f"Total T: {t+1} Episode Num: {episode_num+1} Episode T: {episode_timesteps} Reward: {episode_reward:.3f} Result: {result}")
+			print(f"Total T: {t+1} Episode Num: {episode_num+1} Episode T: {episode_timesteps} Reward: {episode_reward:.3f}")
 			# Reset environment
 			state, done = env.reset(), False
 			episode_reward = 0
 			episode_timesteps = 0
-			episode_num += 1
-			t_s = 0
-		if t >= args.start_timesteps:
-			policy.train(replay_buffer, args.batch_size)
+			episode_num += 1 
 
 		# Evaluate episode
 		if (t + 1) % args.eval_freq == 0:
-			past_action = np.array([0., 0.])
-			evaluations = [eval_policy(policy, past_action, env, time_step)]
+			evaluations.append(eval_policy(policy, args.env, args.seed))
 			np.save(f"./results/{file_name}", evaluations)
 			if args.save_model: policy.save(f"./models/{file_name}")

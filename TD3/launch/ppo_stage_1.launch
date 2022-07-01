@@ -1,3 +1,0 @@
-<launch>
-  <node pkg="project" type="ppo_stage_1.py" name="ppo_stage_1" output="screen" />
-</launch>
