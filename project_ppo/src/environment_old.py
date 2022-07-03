@@ -186,7 +186,7 @@ class Env():
 
         state, rel_dis, yaw, rel_theta, diff_angle, done, arrive = self.getState(data)
         state = [i / 3.5 for i in state]
-        state = Pick(state, len_batch)
+        # state = Pick(state, len_batch)
         for pa in past_action:
             state.append(pa)
         state = state + [rel_dis / diagonal_dis, yaw / 360, rel_theta / 360, diff_angle / 180]
@@ -227,7 +227,7 @@ class Env():
         self.goal_distance = self.getGoalDistace()
         state, rel_dis, yaw, rel_theta, diff_angle, done, arrive = self.getState(data)
         state = [i / 3.5 for i in state]
-        state = Pick(state, len_batch)
+        # state = Pick(state, len_batch)
         state.append(0)
         state.append(0)
         state = state + [rel_dis / diagonal_dis, yaw / 360, rel_theta / 360, diff_angle / 180]

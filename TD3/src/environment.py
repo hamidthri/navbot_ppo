@@ -15,13 +15,13 @@ from sensor_msgs.msg import Image
 from nav_msgs.msg import Odometry
 from std_srvs.srv import Empty
 from gazebo_msgs.srv import SpawnModel, DeleteModel
-from pick_laser import Pick
+# from pick_laser import Pick
 # from tf.transformations import euler_from_quaternion
-from wall_penalty import pen_wall
-diagonal_dis = math.sqrt(2) * (3.8 + 3.8)
-goal_model_dir = os.path.join(os.path.split(os.path.realpath(__file__))[0], '..', '..', 'turtlebot3_simulations',
+
+diagonal_dis = math.sqrt(2) * (3.6 + 3.8)
+goal_model_dir = os.path.join(os.path.split(os.path.realpath(__file__))[0], '..','..', 'turtlebot3_simulations',
                               'turtlebot3_gazebo', 'models', 'Target', 'model.sdf')
-len_batch = 6
+
 
 class Env():
     def __init__(self, is_training):
@@ -37,19 +37,10 @@ class Env():
         self.goal = rospy.ServiceProxy('/gazebo/spawn_sdf_model', SpawnModel)
         self.del_model = rospy.ServiceProxy('/gazebo/delete_model', DeleteModel)
         self.past_distance = 0.
-        self.sum1 = 0
-        self.sum2 = 0
         if is_training:
             self.threshold_arrive = 0.2
         else:
             self.threshold_arrive = 0.4
-
-    # def close(self):
-    #     """
-    #     Close environment. No other method calls possible afterwards.
-    #     """
-    #     self.roslaunch.shutdown()
-    #     time.sleep(10)
 
     def getGoalDistace(self):
         goal_distance = math.hypot(self.goal_position.position.x - self.position.x, self.goal_position.position.y - self.position.y)
@@ -89,15 +80,14 @@ class Env():
         else:
             theta = math.pi
         rel_theta = round(math.degrees(theta), 2)
-        diff_angle = (yaw - rel_theta)
-        if 0 <= diff_angle <= 180 or -180 <= diff_angle < 0:
-            diff_angle = round(diff_angle, 2)
-        elif diff_angle < -180:
-            diff_angle = round(360 + diff_angle, 2)
-        else:
-            diff_angle = round(-360 + diff_angle, 2)
 
-        # print(diff_angle)
+        diff_angle = abs(rel_theta - yaw)
+
+        if diff_angle <= 180:
+            diff_angle = round(diff_angle, 2)
+        else:
+            diff_angle = round(360 - diff_angle, 2)
+
         self.rel_theta = rel_theta
         self.yaw = yaw
         self.diff_angle = diff_angle
@@ -124,6 +114,7 @@ class Env():
 
         current_distance = math.hypot(self.goal_position.position.x - self.position.x, self.goal_position.position.y - self.position.y)
         if current_distance <= self.threshold_arrive:
+            # done = True
             arrive = True
 
         return scan_range, current_distance, yaw, rel_theta, diff_angle, done, arrive
@@ -154,12 +145,6 @@ class Env():
                 target.model_xml = goal_urdf
                 self.goal_position.position.x = random.uniform(-3.6, 3.6)
                 self.goal_position.position.y = random.uniform(-3.6, 3.6)
-                while 1.6 <= self.goal_position.position.x <= 2.4 and -1.4 <= self.goal_position.position.y <= 1.4 \
-                        or -2.4 <= self.goal_position.position.x <= -1.6 and -1.4 <= self.goal_position.position.y <= 1.4 \
-                        or -1.4 <= self.goal_position.position.x <= 1.4 and 1.6 <= self.goal_position.position.y <= 2.4 \
-                        or -1.4 <= self.goal_position.position.x <= 1.4 and -2.4 <= self.goal_position.position.y <= -1.6:
-                    self.goal_position.position.x = random.uniform(-3.6, 3.6)
-                    self.goal_position.position.y = random.uniform(-3.6, 3.6)
                 self.goal(target.model_name, target.model_xml, 'namespace', self.goal_position, 'world')
             except (rospy.ServiceException) as e:
                 print("/gazebo/failed to build the target")
@@ -187,11 +172,13 @@ class Env():
 
         state, rel_dis, yaw, rel_theta, diff_angle, done, arrive = self.getState(data)
         state = [i / 3.5 for i in state]
-        # state = Pick(state, len_batch)
+
         for pa in past_action:
             state.append(pa)
+
         state = state + [rel_dis / diagonal_dis, yaw / 360, rel_theta / 360, diff_angle / 180]
         reward = self.setReward(done, arrive)
+
         return np.asarray(state), reward, done, arrive
 
     def reset(self):
@@ -205,22 +192,20 @@ class Env():
         except (rospy.ServiceException) as e:
             print("gazebo/reset_simulation service call failed")
 
-        # Build the targets
+        # Build the targetz
         rospy.wait_for_service('/gazebo/spawn_sdf_model')
         try:
             goal_urdf = open(goal_model_dir, "r").read()
             target = SpawnModel
             target.model_name = 'target'  # the same with sdf name
             target.model_xml = goal_urdf
-
             self.goal_position.position.x = random.uniform(-3.6, 3.6)
             self.goal_position.position.y = random.uniform(-3.6, 3.6)
-            while 1.7 <= self.goal_position.position.x <= 2.3 and -1.2 <= self.goal_position.position.y <= 1.2 \
-                    or -2.3 <= self.goal_position.position.x <= -1.7 and -1.2 <= self.goal_position.position.y <= 1.2 \
-                    or -1.2 <= self.goal_position.position.x <= 1.2 and 1.7 <= self.goal_position.position.y <= 2.3 \
-                    or -1.2 <= self.goal_position.position.x <= 1.2 and -2.3 <= self.goal_position.position.y <= -1.7:
-                self.goal_position.position.x = random.uniform(-3.6, 3.6)
-                self.goal_position.position.y = random.uniform(-3.6, 3.6)
+
+            # if -0.3 < self.goal_position.position.x < 0.3 and -0.3 < self.goal_position.position.y < 0.3:
+            #     self.goal_position.position.x += 1
+            #     self.goal_position.position.y += 1
+
             self.goal(target.model_name, target.model_xml, 'namespace', self.goal_position, 'world')
         except (rospy.ServiceException) as e:
             print("/gazebo/failed to build the target")
@@ -235,9 +220,10 @@ class Env():
         self.goal_distance = self.getGoalDistace()
         state, rel_dis, yaw, rel_theta, diff_angle, done, arrive = self.getState(data)
         state = [i / 3.5 for i in state]
-        # state = Pick(state, len_batch)
+
         state.append(0)
         state.append(0)
+
         state = state + [rel_dis / diagonal_dis, yaw / 360, rel_theta / 360, diff_angle / 180]
 
         return np.asarray(state)
