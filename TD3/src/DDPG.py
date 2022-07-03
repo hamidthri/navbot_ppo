@@ -101,21 +101,22 @@ class DDPG(object):
 
 		for param, target_param in zip(self.actor.parameters(), self.actor_target.parameters()):
 			target_param.data.copy_(self.tau * param.data + (1 - self.tau) * target_param.data)
+		return actor_loss, critic_loss, current_Q.mean(), target_Q.mean()
 
-	def save(self, filename):
-		torch.save(self.critic.state_dict(), filename + "_critic")
-		torch.save(self.critic_optimizer.state_dict(), filename + "_critic_optimizer")
+	def save(self, filename, iteration):
+		torch.save(self.critic.state_dict(), filename + f"_critic{iteration}")
+		torch.save(self.critic_optimizer.state_dict(), filename + f"_critic_optimizer{iteration}")
 		
-		torch.save(self.actor.state_dict(), filename + "_actor")
-		torch.save(self.actor_optimizer.state_dict(), filename + "_actor_optimizer")
+		torch.save(self.actor.state_dict(), filename + f"_actor{iteration}")
+		torch.save(self.actor_optimizer.state_dict(), filename + f"_actor_optimizer{iteration}")
 
 
-	def load(self, filename):
-		self.critic.load_state_dict(torch.load(filename + "_critic"))
-		self.critic_optimizer.load_state_dict(torch.load(filename + "_critic_optimizer"))
+	def load(self, filename, iteration):
+		self.critic.load_state_dict(torch.load(filename + f"_critic{iteration}"))
+		self.critic_optimizer.load_state_dict(torch.load(filename + f"_critic_optimizer{iteration}"))
 		self.critic_target = copy.deepcopy(self.critic)
 
-		self.actor.load_state_dict(torch.load(filename + "_actor"))
-		self.actor_optimizer.load_state_dict(torch.load(filename + "_actor_optimizer"))
+		self.actor.load_state_dict(torch.load(filename + f"_actor{iteration}"))
+		self.actor_optimizer.load_state_dict(torch.load(filename + f"_actor_optimizer{iteration}"))
 		self.actor_target = copy.deepcopy(self.actor)
 		
