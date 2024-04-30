@@ -1,7 +1,3 @@
-# Navbot_ppo using Reinforcement Learning
-
-## the project for turtlebot navigation
-
 # End-to-end motion planner using Proximal Policy Optimization (PPO) in gazebo
 
 The goal is to use deep reinforcement learning algorithms: Proximal Policy Optimization (PPO) to control mobile robot(turtlebot) to avoid obstacles while trying to arrive at a target.
