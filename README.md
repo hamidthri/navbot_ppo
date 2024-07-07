@@ -1,18 +1,20 @@
-# End-to-end motion planner using Proximal Policy Optimization (PPO) in gazebo
+# End-to-end Motion Planner Using Proximal Policy Optimization (PPO) in Gazebo
 
-The goal is to use deep reinforcement learning algorithms: Proximal Policy Optimization (PPO) to control mobile robot(turtlebot) to avoid obstacles while trying to arrive at a target.
+The goal is to use deep reinforcement learning algorithms, specifically Proximal Policy Optimization (PPO), to control a mobile robot (TurtleBot) to avoid obstacles while navigating towards a target.
 
-Goal: Let robot(turtlebot) navigate to the target(enter green circle)
+**Goal:** Enable the robot (TurtleBot) to navigate to the target (enter the green circle).
 
-### Introduce 
+### Introduction
 
-# Advancements in Technology and Service Robots
+## Advancements in Technology and Service Robots
 
 As technology progresses, the integration of service robots into our daily lives is becoming increasingly common. Service robots incorporate a multitude of key technologies from various fields, including mobile navigation, system control, mechanism modules, vision modules, voice modules, artificial intelligence, and other related technical fields. This research is particularly focused on developing indoor robot navigation techniques.
 
 ## Project Overview: Learning-Based Mapless Motion Planner
 
 In this project, we introduce a learning-based mapless motion planner that utilizes sparse laser signals and the target's position in the robot frame (i.e., relative distance and angles) as inputs. This approach generates continuous steering commands as outputs, eliminating the need for traditional mapping methods like SLAM (Simultaneous Localization and Mapping). This innovative planner is capable of navigating without prior maps and can adapt to new environments it has never encountered before.
+
+Our approach is inspired by recent advancements in reinforcement learning for robotic navigation, such as the work presented in ["Reinforcement Learning Based Mapless Navigation in Dynamic Environments Using LiDAR" (arXiv:2405.16266)](https://arxiv.org/abs/2405.16266). This paper demonstrates the efficacy of deep reinforcement learning techniques in enabling robots to navigate complex, dynamic environments without relying on pre-built maps.
 
 ### Input Specifications (State):
 
