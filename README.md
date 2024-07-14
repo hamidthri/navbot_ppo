@@ -9,6 +9,9 @@ The goal is to use deep reinforcement learning algorithms, specifically Proximal
 
 Watch a demonstration of our mapless motion planner in action:
 
+
+
+
 [![Demo Video](demo/video_thumbnail.png)](demo/video.mp4)
 
 ### Introduction
