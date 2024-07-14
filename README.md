@@ -4,6 +4,13 @@ The goal is to use deep reinforcement learning algorithms, specifically Proximal
 
 **Goal:** Enable the robot (TurtleBot) to navigate to the target (enter the green circle).
 
+
+### Demo Video
+
+Watch a demonstration of our mapless motion planner in action:
+
+[![Demo Video](demo/video_thumbnail.png)](demo/video.mp4)
+
 ### Introduction
 
 ## Advancements in Technology and Service Robots
@@ -17,6 +24,9 @@ In this project, we introduce a learning-based mapless motion planner that utili
 Our approach is inspired by advancements in reinforcement learning for robotic navigation, as detailed in our paper ["Reinforcement Learning Based Mapless Navigation in Dynamic Environments Using LiDAR" (arXiv:2405.16266)](https://arxiv.org/abs/2405.16266). This paper demonstrates the efficacy of deep reinforcement learning techniques in enabling robots to navigate complex, dynamic environments without relying on pre-built maps.
 
 ### Input Specifications (State):
+- Describe your input specifications here...
+
+
 
 The input features, forming a 16-dimensional state, include:
 
