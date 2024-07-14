@@ -110,7 +110,7 @@ roslaunch turtlebot3_gazebo turtlebot3_stage_1.launch
 ```
 ## In another terminal
 ```bash
-roslaunch project ppo_stage_1.launch
+roslaunch project_ppo ppo_stage_1.launch
 ```
 
 # Training Option
