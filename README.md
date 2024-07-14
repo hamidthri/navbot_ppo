@@ -24,9 +24,6 @@ In this project, we introduce a learning-based mapless motion planner that utili
 Our approach is inspired by advancements in reinforcement learning for robotic navigation, as detailed in our paper ["Reinforcement Learning Based Mapless Navigation in Dynamic Environments Using LiDAR" (arXiv:2405.16266)](https://arxiv.org/abs/2405.16266). This paper demonstrates the efficacy of deep reinforcement learning techniques in enabling robots to navigate complex, dynamic environments without relying on pre-built maps.
 
 ### Input Specifications (State):
-- Describe your input specifications here...
-
-
 
 The input features, forming a 16-dimensional state, include:
 
