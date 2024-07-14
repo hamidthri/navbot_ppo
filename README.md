@@ -5,14 +5,11 @@ The goal is to use deep reinforcement learning algorithms, specifically Proximal
 **Goal:** Enable the robot (TurtleBot) to navigate to the target (enter the green circle).
 
 
-### Demo Video
+### Demo GIF
 
 Watch a demonstration of our mapless motion planner in action:
 
-
-
-
-[![Demo Video](demo/video_thumbnail.png)](demo/video.mp4)
+![Demo GIF](demo/video.gif)
 
 ### Introduction
 
