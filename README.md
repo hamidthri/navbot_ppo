@@ -9,6 +9,10 @@ The goal is to use deep reinforcement learning algorithms, specifically Proximal
 
 Watch a demonstration of our mapless motion planner in action:
 
+![me](https://github.com/hamidthri/navbot_ppo/demo/video.mp4)
+
+
+
 [![Demo Video](demo/video_thumbnail.png)](demo/video.mp4)
 
 ### Introduction
