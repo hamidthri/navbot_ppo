@@ -7,7 +7,7 @@ The goal is to use deep reinforcement learning algorithms, specifically Proximal
 
 ### Demo GIF
 
-Watch a demonstration of our mapless motion planner in action:
+Watch a demonstration of our mapless motion planner in action (3x):
 
 ![Demo GIF](demo/video.gif)
 
