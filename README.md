@@ -2,7 +2,7 @@
 
 The goal is to use deep reinforcement learning algorithms, specifically Proximal Policy Optimization (PPO), to control a mobile robot (TurtleBot) to avoid obstacles while navigating towards a target.
 
-**Goal:** Enable the robot (TurtleBot) to navigate to the target (enter the green circle).
+**Goal:** Enable the robot (TurtleBot) to navigate to the target (enter the yellow circle).
 
 
 ### Demo GIF
