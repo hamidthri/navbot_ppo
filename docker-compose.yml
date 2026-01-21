@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  navbot:
+    build: .
+    image: navbot-ppo:latest
+    container_name: navbot-ppo
+    environment:
+      - DISPLAY=:0
+      - TURTLEBOT3_MODEL=burger
+      - QT_X11_NO_MITSHM=1
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ./project_ppo:/root/catkin_ws/src/project_ppo:rw
+    network_mode: host
+    stdin_open: true
+    tty: true
+    privileged: true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

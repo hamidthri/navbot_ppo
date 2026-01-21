@@ -104,6 +104,14 @@ class PPO:
             'Iteration': 0,
         }
         self.writer = SummaryWriter(log_dir=self.log_dir)
+        
+        # Setup episode metrics CSV
+        self.episode_csv_path = f'{record_dir}/{self.method_name}_train_episodes.csv'
+        import csv
+        with open(self.episode_csv_path, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(['episode', 'timestep', 'success', 'collision', 'timeout', 'length', 'return', 'path_length'])
+        self.episode_count = 0
 
     def learn(self, total_timesteps, past_action):
         """
@@ -127,6 +135,7 @@ class PPO:
 
             # Calculate how many timesteps we collected this batch
             t_so_far += np.sum(batch_lens)
+            print(f"[DEBUG] Batch collected: t_so_far={t_so_far}, batch_lens_sum={np.sum(batch_lens)}", flush=True)
 
             # Increment the number of iterations
             i_so_far += 1
@@ -197,8 +206,8 @@ class PPO:
 
             if i_so_far % self.save_freq == 0:
                 epoch = i_so_far // self.save_freq
-                torch.save(self.actor.state_dict(), f'../../../models/{self.exp_id}/ppo_actor_{epoch}.pth')
-                torch.save(self.critic.state_dict(), f'../../../models/{self.exp_id}/ppo_critic_{epoch}.pth')
+                torch.save(self.actor.state_dict(), f'../../../models/{self.exp_id}/ppo_actor_{self.method_name}_{epoch}.pth')
+                torch.save(self.critic.state_dict(), f'../../../models/{self.exp_id}/ppo_critic_{self.method_name}_{epoch}.pth')
 
     def rollout(self, past_action, t_so_far):
         """
@@ -216,6 +225,7 @@ class PPO:
 				batch_rtgs - the Rewards-To-Go of each timestep in this batch. Shape: (number of timesteps)
 				batch_lens - the lengths of each episode this batch. Shape: (number of episodes)
 		"""
+        print(f"[DEBUG] Starting rollout: collecting {self.timesteps_per_batch} timesteps...", flush=True)
         # Batch data. For more details, check function header.
         batch_obs = []
         batch_acts = []
@@ -230,6 +240,11 @@ class PPO:
         episode_reward = 0
         one_round = 0
         ep_rews = []
+        
+        # Episode metrics tracking
+        ep_path_length = 0.0
+        prev_pos = None
+        
         # while t < self.timesteps_per_batch:
         for t in range(self.timesteps_per_batch):
 
@@ -238,6 +253,13 @@ class PPO:
             # Calculate action and make a step in the env.
             # Note that rew is short for reward.
             action, log_prob = self.get_action(obs, t_so_far, one_round)
+            
+            # Get position before step for path length calculation
+            curr_pos = np.array([self.env.position.x, self.env.position.y])
+            if prev_pos is not None:
+                ep_path_length += np.linalg.norm(curr_pos - prev_pos)
+            prev_pos = curr_pos
+            
             # old state as input because of reward function
             obs, rew, done, arrive = self.env.step(action, past_action)
 
@@ -249,16 +271,39 @@ class PPO:
             batch_log_probs.append(log_prob)
             # t += 1 		# Increment timesteps ran this batch so far
             one_round += 1
-            if done or one_round >= self.max_timesteps_per_episode:
+            
+            # Check termination: collision, arrival, or timeout
+            timeout = (one_round >= self.max_timesteps_per_episode)
+            if done or arrive or timeout:
+                # Log episode metrics
+                success = 1 if arrive else 0
+                collision = 1 if (done and not arrive) else 0
+                timeout_flag = 1 if (timeout and not done and not arrive) else 0
+                
+                self._log_episode_metrics(
+                    episode_num=self.episode_count,
+                    timestep=t_so_far + np.sum(batch_lens) + one_round,
+                    success=success,
+                    collision=collision,
+                    timeout=timeout_flag,
+                    length=one_round,
+                    ep_return=episode_reward,
+                    path_length=ep_path_length
+                )
+                self.episode_count += 1
+                
                 batch_lens.append(one_round)
                 batch_rews.append(ep_rews)
                 ep_rews = []
                 if one_round != 0:
+                    result = 'Success' if arrive else ('Collision' if done else 'Timeout')
                     print('Step: %3i' % one_round, '| avg_reward:{:.2f}'.format(episode_reward / one_round),
                           '| Time step: %i' % (t_so_far + np.sum(batch_lens)), '|', result)
                     self.logger['Episode_Rewards'].append(episode_reward / one_round)
                 episode_reward = 0
                 one_round = 0
+                ep_path_length = 0.0
+                prev_pos = None
                 past_action = [0, 0]
                 done = False
                 obs = self.env.reset()
@@ -266,21 +311,6 @@ class PPO:
             # If render is specified, render the environment
             # if self.render and (self.logger['i_so_far'] % self.render_every_i == 0) and len(batch_lens) == 0:
             # 	self.env.render()
-            # If the environment tells us the episode is terminated, break
-            if arrive:
-                result = 'Success'
-            else:
-                result = 'Fail'
-            if arrive:
-                batch_rews.append(ep_rews)
-                ep_rews = []
-                batch_lens.append(one_round)
-                if one_round != 0:
-                    print('Step: %3i' % one_round, '| avg_reward:{:.2f}'.format(episode_reward / one_round),
-                          '| Time step: %i' % (t_so_far + np.sum(batch_lens)), '|', result)
-                    self.logger['Episode_Rewards'].append(episode_reward / one_round)
-                episode_reward = 0
-                one_round = 0
 
         # Track episodic lengths and rewards
         batch_rews.append(ep_rews)
@@ -404,6 +434,15 @@ class PPO:
         # and log probabilities log_probs of each action in the batch
         return self.V, log_probs
 
+    def _log_episode_metrics(self, episode_num, timestep, success, collision, timeout, length, ep_return, path_length):
+        """
+            Log per-episode metrics to CSV file.
+        """
+        import csv
+        with open(self.episode_csv_path, 'a', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow([episode_num, timestep, success, collision, timeout, length, ep_return, path_length])
+
     def _init_hyperparameters(self, hyperparameters):
         """
 			Initialize default and custom values for hyperparameters
@@ -430,6 +469,7 @@ class PPO:
         self.save_freq = 2  # How often we save in number of iterations
         self.seed = None  # Sets the seed of our program, used for reproducibility of results
         self.exp_id = 'v02_simple_env_60_reward_proportion'
+        self.method_name = 'baseline'  # Method identifier for checkpoints and logs
 
         # Change any default values to custom values for specified hyperparameters
         for param, val in hyperparameters.items():
@@ -449,7 +489,7 @@ class PPO:
             'save_freq': self.save_freq,
             'seed': self.seed,
             'exp_id': self.exp_id,
-
+            'method_name': self.method_name,
         }
 
         ### create model folder

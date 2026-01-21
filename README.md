@@ -4,6 +4,44 @@ The goal is to use deep reinforcement learning algorithms, specifically Proximal
 
 **Goal:** Enable the robot (TurtleBot) to navigate to the target (enter the yellow circle).
 
+---
+
+## 🐳 Docker Setup for Ubuntu 24.04 (GPU Accelerated)
+
+**Prerequisites:** Docker, Docker Compose, NVIDIA GPU with drivers installed
+
+### Quick Start
+
+```bash
+# 1. Install Docker and NVIDIA Container Toolkit (if needed)
+sudo apt-get update && sudo apt-get install -y docker.io docker-compose-v2
+curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
+curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
+sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
+sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker
+sudo chmod 666 /var/run/docker.sock
+
+# 2. Build and start container
+docker compose build
+docker compose up -d
+
+# 3. Launch Gazebo simulation (headless)
+docker exec -d navbot-ppo bash -c "source /opt/ros/noetic/setup.bash && source /root/catkin_ws/devel/setup.bash && roslaunch /tmp/turtlebot3_stage_1_headless.launch"
+
+# 4. Run PPO training (in another terminal)
+docker exec -it navbot-ppo bash
+source /opt/ros/noetic/setup.bash && source /root/catkin_ws/devel/setup.bash
+cd /root/catkin_ws/src/project_ppo/src
+python3 main.py
+
+# Monitor robot commands
+docker exec navbot-ppo bash -c "source /opt/ros/noetic/setup.bash && rostopic echo /cmd_vel"
+```
+
+**Note:** The setup uses headless Gazebo (no GUI) to avoid X11 issues in Docker. The training runs with GPU acceleration automatically.
+
+---
+
 
 ### Demo GIF
 
@@ -84,6 +122,33 @@ The outputs, forming a 2-dimensional action, consist of:
 > http://gazebosim.org/tutorials?cat=install&tut=install_ubuntu&ver=7.0
 
 
+# Installation
+
+## Option 1: Docker Setup (Recommended for Ubuntu 24.04)
+
+**For Ubuntu 24.04 users:** Since ROS1 cannot be installed natively on Ubuntu 24, use the Docker setup with browser-based Gazebo GUI.
+
+📖 **See [DOCKER_SETUP.md](DOCKER_SETUP.md) for complete Docker installation and usage instructions.**
+
+**Quick Start:**
+```bash
+# Build and start container
+docker compose up -d
+
+# Access container
+docker exec -it navbot-ppo bash
+
+# Open browser to http://localhost:6080 to view Gazebo GUI
+
+# Inside container - Terminal 1:
+roslaunch turtlebot3_gazebo turtlebot3_stage_1.launch
+
+# Inside container - Terminal 2:
+roslaunch project ppo_stage_1.launch
+```
+
+## Option 2: Native Installation (Ubuntu 20.04 only)
+
 # Create and Initialize the Workspace
 ```bash
 cd
@@ -95,7 +160,6 @@ git clone https://github.com/hamidthri/turtlebot3_simulations
 cd ..
 catkin_make
 ```
-
 
 # Configure Environment
 ```bash
