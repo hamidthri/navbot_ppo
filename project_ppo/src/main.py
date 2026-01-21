@@ -26,7 +26,7 @@ is_training = True
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
-def train(env, hyperparameters, actor_model, critic_model):
+def train(env, hyperparameters, actor_model, critic_model, max_timesteps=5000):
     """
         Trains the model.
 
@@ -35,24 +35,54 @@ def train(env, hyperparameters, actor_model, critic_model):
             hyperparameters - a dict of hyperparameters to use, defined in main
             actor_model - the actor model to load in if we want to continue training
             critic_model - the critic model to load in if we want to continue training
+            max_timesteps - maximum timesteps to train for
 
         Return:
             None
     """
     print(f"Start Training ... ", flush=True)
+    
+    # Get actual state_dim from environment (may include vision features)
+    actual_state_dim = hyperparameters.pop('state_dim', state_dim)
 
     # Create a model for PPO.
-    agent = PPO(policy_class=NetActor, value_func=NetCritic, env=env, state_dim=state_dim, action_dim=action_dim,
+    agent = PPO(policy_class=NetActor, value_func=NetCritic, env=env, state_dim=actual_state_dim, action_dim=action_dim,
                 **hyperparameters)
     past_action = np.array([0., 0.])
 
     # Tries to load in an existing actor/critic model to continue training on
-    critic_path = sorted(glob.glob(f'../../../models/{agent.exp_id}/ppo_critic_*.pth'))
-    actor_path  = sorted(glob.glob(f'../../../models/{agent.exp_id}/ppo_actor_*.pth'))
-    if critic_path != []:
-        print(f"Loading in {actor_path[-1]} and {critic_path[-1]}...", flush=True)
-        agent.actor.load_state_dict(torch.load(actor_path[-1]))
-        agent.critic.load_state_dict(torch.load(critic_path[-1]))
+    checkpoint_pattern = os.path.join(agent.checkpoint_dir, 'critic_step*.pth')
+    critic_paths = sorted(glob.glob(checkpoint_pattern))
+    actor_pattern = os.path.join(agent.checkpoint_dir, 'actor_step*.pth')
+    actor_paths = sorted(glob.glob(actor_pattern))
+    
+    # Only load if state_dim matches (check if we have vision features)
+    load_checkpoint = False
+    if critic_paths != [] and actor_paths != []:
+        # Try to load and check dimensions
+        try:
+            checkpoint = torch.load(actor_paths[-1])
+            # Check first layer input dimension
+            first_key = list(checkpoint.keys())[0]
+            if 'bn1' in first_key or 'rb1.fc1' in first_key:
+                # Extract input dim from first layer
+                for key in checkpoint.keys():
+                    if 'rb1.fc1.weight' in key:
+                        checkpoint_input_dim = checkpoint[key].shape[1]
+                        if checkpoint_input_dim == actual_state_dim:
+                            load_checkpoint = True
+                            print(f"Checkpoint state_dim matches ({checkpoint_input_dim}), will load", flush=True)
+                        else:
+                            print(f"Checkpoint state_dim mismatch: checkpoint={checkpoint_input_dim}, current={actual_state_dim}", flush=True)
+                            print(f"Training from scratch with new state_dim", flush=True)
+                        break
+        except Exception as e:
+            print(f"Could not check checkpoint dimensions: {e}", flush=True)
+    
+    if load_checkpoint:
+        print(f"Loading in {actor_paths[-1]} and {critic_paths[-1]}...", flush=True)
+        agent.actor.load_state_dict(torch.load(actor_paths[-1]))
+        agent.critic.load_state_dict(torch.load(critic_paths[-1]))
         print(f"Successfully loaded.", flush=True)
     elif actor_model != '' or critic_model != '':  # Don't train from scratch if user accidentally forgets actor/critic model
         print(
@@ -62,9 +92,7 @@ def train(env, hyperparameters, actor_model, critic_model):
         print(f"Training from scratch.", flush=True)
 
     # Train the PPO model with a specified total timesteps
-    # NOTE: You can change the total timesteps here, I put a big number just because
-    # you can kill the process whenever you feel like PPO is converging
-    agent.learn(total_timesteps=5000000, past_action=past_action)
+    agent.learn(total_timesteps=max_timesteps, past_action=past_action)
     #
 
 def test(env, actor_model):
@@ -112,6 +140,7 @@ def evaluate(env, hyperparameters, actor_model, critic_model, num_episodes):
     
     method_name = hyperparameters.get('method_name', 'baseline')
     exp_id = hyperparameters['exp_id']
+    actual_state_dim = hyperparameters.pop('state_dim', state_dim)
     
     # Load model
     if actor_model == '':
@@ -124,7 +153,7 @@ def evaluate(env, hyperparameters, actor_model, critic_model, num_episodes):
     
     print(f"Loading actor model: {actor_model}", flush=True)
     
-    policy = NetActor(state_dim, action_dim).to(device)
+    policy = NetActor(actual_state_dim, action_dim).to(device)
     policy.load_state_dict(torch.load(actor_model))
     policy.eval()
     
@@ -219,11 +248,22 @@ def makepath(desired_path, isfile = False):
 
 def main(args):
     rospy.init_node('ppo_stage_1')
-    env = Env(is_training)
+    
+    # Setup vision mode based on method_name
+    use_vision = 'vision' in args.method_name.lower()
+    vision_dim = 64  # Default vision feature dimension
+    
+    if use_vision:
+        print(f"[main] Vision mode enabled for method: {args.method_name}", flush=True)
+    
+    env = Env(is_training, use_vision=use_vision, vision_dim=vision_dim)
+    
+    # Calculate actual state dimension
+    actual_state_dim = state_dim + (vision_dim if use_vision else 0)
+    print(f'State Dimensions: {actual_state_dim} (base={state_dim}, vision={vision_dim if use_vision else 0})', flush=True)
     # agent = DDPG(env, state_dim, action_dim)
 
 
-    print('State Dimensions: ' + str(state_dim))
     print('Action Dimensions: ' + str(action_dim))
     print('Action Max: ' + str(action_linear_max) + ' m/s and ' + str(action_angular_max) + ' rad/s')
     """
@@ -239,19 +279,19 @@ def main(args):
     # ArgumentParser because it's too annoying to type them every time at command line. Instead, you can change them here.
     # To see a list of hyperparameters, look in ppo.py at function _init_hyperparameters
     hyperparameters = {
-        'timesteps_per_batch': 8000,
-        'max_timesteps_per_episode': 800,
+        'timesteps_per_batch': args.timesteps_per_episode,
+        'max_timesteps_per_episode': args.timesteps_per_episode,
         'gamma': 0.99,
         'n_updates_per_iteration': 50,
         'lr': 3e-4,
         'clip': 0.2,
         'render': True,
         'render_every_i': 10,
-        'log_dir': '',
         'exp_id': "v02_simple_env_60_reward_proportion",
-        'method_name': args.method_name
+        'method_name': args.method_name,
+        'state_dim': actual_state_dim,
+        'output_dir': args.output_dir
     }
-    hyperparameters['log_dir'] = '/is/ps2/otaheri/hamid/repos/planner/catkin_ws/src/project_ppo/src/summary/'+hyperparameters['exp_id']
 
     # Creates the environment we'll be running. If you want to replace with your own
     # custom environment, note that it must inherit Gym and have both continuous
@@ -263,7 +303,7 @@ def main(args):
                  critic_model=args.critic_model, num_episodes=args.eval_episodes)
     elif args.mode == 'train':
         train(env=env, hyperparameters=hyperparameters, actor_model=args.actor_model,
-              critic_model=args.critic_model)
+              critic_model=args.critic_model, max_timesteps=args.max_timesteps)
         ### env.logger_global
     else:
         test(env=env, actor_model=args.actor_model)

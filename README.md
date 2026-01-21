@@ -6,39 +6,27 @@ The goal is to use deep reinforcement learning algorithms, specifically Proximal
 
 ---
 
-## 🐳 Docker Setup for Ubuntu 24.04 (GPU Accelerated)
+## 🐳 **Running on Ubuntu 24.04? Use Docker!**
 
-**Prerequisites:** Docker, Docker Compose, NVIDIA GPU with drivers installed
+ROS1 cannot be installed natively on Ubuntu 24.04. We provide a complete **Docker setup with browser-accessible Gazebo GUI**.
 
-### Quick Start
+**🚀 Quick Start (3 steps):**
 
 ```bash
-# 1. Install Docker and NVIDIA Container Toolkit (if needed)
-sudo apt-get update && sudo apt-get install -y docker.io docker-compose-v2
-curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg
-curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list
-sudo apt-get update && sudo apt-get install -y nvidia-container-toolkit
-sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker
-sudo chmod 666 /var/run/docker.sock
+# 1. Install Docker
+./setup_docker.sh
+# (Then log out and back in)
 
-# 2. Build and start container
-docker compose build
-docker compose up -d
+# 2. Build and run
+./quick_start.sh
 
-# 3. Launch Gazebo simulation (headless)
-docker exec -d navbot-ppo bash -c "source /opt/ros/noetic/setup.bash && source /root/catkin_ws/devel/setup.bash && roslaunch /tmp/turtlebot3_stage_1_headless.launch"
-
-# 4. Run PPO training (in another terminal)
-docker exec -it navbot-ppo bash
-source /opt/ros/noetic/setup.bash && source /root/catkin_ws/devel/setup.bash
-cd /root/catkin_ws/src/project_ppo/src
-python3 main.py
-
-# Monitor robot commands
-docker exec navbot-ppo bash -c "source /opt/ros/noetic/setup.bash && rostopic echo /cmd_vel"
+# 3. Open browser
+# Go to: http://localhost:6080
+# Run: roslaunch turtlebot3_gazebo turtlebot3_stage_1.launch
+# Then: roslaunch project ppo_stage_1.launch
 ```
 
-**Note:** The setup uses headless Gazebo (no GUI) to avoid X11 issues in Docker. The training runs with GPU acceleration automatically.
+**📖 See [QUICKSTART.md](QUICKSTART.md) for detailed Docker instructions.**
 
 ---
 
@@ -167,6 +155,173 @@ echo "export TURTLEBOT3_MODEL=burger" >> ~/.bashrc
 echo "source /home/'Enter your user name'/catkin_ws/devel/setup.bash" >> ~/.bashrc
 source ~/.bashrc
 ```
+
+---
+
+## 🐋 Docker Development Setup
+
+For development where you want to see code changes immediately on your host machine, use a bind-mounted container:
+
+### One-Time Host Setup (Linux)
+
+```bash
+# Allow X11 forwarding for Gazebo GUI
+xhost +local:root
+
+# To revert later (after stopping container):
+# xhost -local:root
+```
+
+### Running Development Container with Bind Mount
+
+```bash
+# From your repo root
+docker run -it --rm \
+  --name navbot-ppo-dev \
+  --net=host \
+  -e DISPLAY=:1 \
+  -e GAZEBO_PLUGIN_PATH=/opt/ros/noetic/lib:/usr/lib/x86_64-linux-gnu/gazebo-11/plugins \
+  -e LD_LIBRARY_PATH=/opt/ros/noetic/lib:/usr/lib/x86_64-linux-gnu/gazebo-11/plugins:${LD_LIBRARY_PATH} \
+  -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
+  -v $(pwd):/root/catkin_ws/src:rw \
+  navbot-ppo:latest \
+  bash
+```
+
+**Important Notes:**
+- `DISPLAY=:1` - Adjust to match your X server (check `/tmp/.X11-unix/`)
+- Bind mount creates live sync between host and container
+- Changes in your IDE on host appear immediately in container
+- `GAZEBO_PLUGIN_PATH` and `LD_LIBRARY_PATH` are **required** for camera plugins
+
+### Inside Container
+
+```bash
+# Source ROS environment
+source /opt/ros/noetic/setup.bash
+cd /root/catkin_ws
+catkin_make
+source devel/setup.bash
+
+# Launch training world with robot camera
+roslaunch turtlebot3_gazebo turtlebot3_stage_1.launch
+
+# In another terminal (docker exec -it navbot-ppo-dev bash)
+cd /root/catkin_ws/src/project_ppo/src
+python3 main.py --method_name my_experiment
+```
+
+---
+
+## 📷 Gazebo Camera Troubleshooting
+
+The robot uses a **real Gazebo camera plugin** for vision-based training. If you encounter issues:
+
+### Symptoms
+- No `/robot_camera/image_raw` topic
+- Error: "Unable to create CameraSensor. Rendering is disabled"
+- Plugin not loading: "libCameraPlugin.so: cannot open shared object file"
+
+### Diagnostic Steps
+
+**1. Check Environment Variables**
+```bash
+# Inside container
+echo $DISPLAY                    # Should be :1 (or match your X server)
+echo $GAZEBO_PLUGIN_PATH        # Should include /opt/ros/noetic/lib and gazebo-11 plugins
+echo $LD_LIBRARY_PATH           # Should include plugin paths
+```
+
+**2. Verify Plugin Dependencies**
+```bash
+# Check if camera plugin can find all dependencies
+export LD_LIBRARY_PATH=/opt/ros/noetic/lib:/usr/lib/x86_64-linux-gnu/gazebo-11/plugins:$LD_LIBRARY_PATH
+ldd /opt/ros/noetic/lib/libgazebo_ros_camera.so | grep "not found"
+
+# Should show nothing. If you see "not found", the paths are incorrect.
+```
+
+**3. Check Camera Topic**
+```bash
+source /opt/ros/noetic/setup.bash
+
+# List camera topics (should see /robot_camera/image_raw)
+rostopic list | grep camera
+
+# Verify publisher is Gazebo (NOT fake_camera_publisher)
+rostopic info /robot_camera/image_raw
+# Output should show: Publishers: * /gazebo (http://...)
+
+# Check publishing rate (~8-10 Hz)
+rostopic hz /robot_camera/image_raw
+```
+
+**4. Check Gazebo Logs**
+```bash
+# Look for camera/rendering errors
+find ~/.ros/log -name "gazebo*.log" -mmin -5 | xargs grep -i "camera\|render\|plugin"
+```
+
+### Required Environment Variables (Fix)
+
+If camera is not working, ensure these are set **before launching Gazebo**:
+
+```bash
+export DISPLAY=:1  # Match your X server socket in /tmp/.X11-unix/
+export GAZEBO_PLUGIN_PATH=/opt/ros/noetic/lib:/usr/lib/x86_64-linux-gnu/gazebo-11/plugins
+export LD_LIBRARY_PATH=/opt/ros/noetic/lib:/usr/lib/x86_64-linux-gnu/gazebo-11/plugins:$LD_LIBRARY_PATH
+```
+
+### Launch File Requirements
+
+In your Gazebo launch file (e.g., `turtlebot3_stage_1.launch`), ensure:
+```xml
+<arg name="headless" value="false"/>  <!-- NOT true! Camera needs rendering -->
+<arg name="gui" value="false"/>       <!-- Can be false, but headless must be false -->
+```
+
+### Save and Verify a Camera Frame
+
+```bash
+# Inside container with ROS running
+cd /root/catkin_ws/src/project_ppo/src
+python3 << 'EOF'
+import rospy
+from sensor_msgs.msg import Image
+import numpy as np
+from PIL import Image as PILImage
+
+rospy.init_node('save_frame', anonymous=True)
+frame = None
+
+def cb(msg):
+    global frame
+    if frame is None:
+        frame = msg
+        arr = np.frombuffer(msg.data, dtype=np.uint8).reshape((msg.height, msg.width, 3))
+        PILImage.fromarray(arr, 'RGB').save('/tmp/camera_test.png')
+        print(f'Saved {msg.width}x{msg.height} frame')
+        rospy.signal_shutdown('done')
+
+rospy.Subscriber('/robot_camera/image_raw', Image, cb)
+rospy.spin()
+EOF
+
+# Copy to host
+exit  # exit container
+docker cp navbot-ppo-dev:/tmp/camera_test.png ./camera_test.png
+```
+
+### Common Issues & Solutions
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| No camera topic | GAZEBO_PLUGIN_PATH not set | Export path before roslaunch |
+| "Rendering is disabled" | headless=true or DISPLAY wrong | Set headless=false, check DISPLAY |
+| libCameraPlugin.so not found | LD_LIBRARY_PATH missing gazebo plugins | Add /usr/lib/x86_64-linux-gnu/gazebo-11/plugins |
+| Topic exists but no messages | Camera sensor not attached to robot | Check URDF has camera_link + plugin |
+
+---
 
 ## Running the Demo
 ```bash

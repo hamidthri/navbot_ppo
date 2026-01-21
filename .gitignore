@@ -108,3 +108,7 @@ venv.bak/
 .mypy_cache/
 .idea/
 project_ppo/src/models/
+
+# Runtime output and training artifacts
+project_ppo/src/record/
+project_ppo/src/summary/

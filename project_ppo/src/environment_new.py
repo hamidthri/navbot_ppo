@@ -24,7 +24,7 @@ goal_model_dir = os.path.join(os.path.split(os.path.realpath(__file__))[0], '..'
 len_batch = 6
 
 class Env():
-    def __init__(self, is_training):
+    def __init__(self, is_training, use_vision=False, vision_dim=64):
         self.position = Pose()
         self.goal_position = Pose()
         self.goal_position.position.x = 0.
@@ -43,6 +43,74 @@ class Env():
             self.threshold_arrive = 0.2
         else:
             self.threshold_arrive = 0.4
+        
+        # Vision setup
+        self.use_vision = use_vision
+        self.vision_dim = vision_dim
+        self.latest_image = None
+        self.image_ok = False
+        self.vision_encoder = None
+        
+        if self.use_vision:
+            print(f"[Env] Initializing vision mode with feature dim={vision_dim}", flush=True)
+            # Try to import and initialize vision encoder
+            try:
+                from vision_encoder import VisionEncoder
+                import torch
+                device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+                self.vision_encoder = VisionEncoder(output_dim=vision_dim, use_pretrained=True)
+                self.vision_encoder = self.vision_encoder.to(device)
+                self.vision_encoder.eval()
+                self.vision_device = device
+                print(f"[Env] Vision encoder loaded on {device}", flush=True)
+            except Exception as e:
+                print(f"[Env] ERROR loading vision encoder: {e}", flush=True)
+                self.use_vision = False
+            
+            # Subscribe to camera topic
+            # Real Gazebo camera topic: /robot_camera/image_raw (published by /gazebo plugin)
+            self.image_topic = '/robot_camera/image_raw'
+            self.sub_camera = rospy.Subscriber(self.image_topic, Image, self.imageCallback)
+            print(f"[Env] Subscribed to {self.image_topic}", flush=True)
+            
+            # Wait briefly for first image
+            print(f"[Env] Waiting for first image on {self.image_topic}...", flush=True)
+            timeout = rospy.Time.now() + rospy.Duration(5.0)
+            while self.latest_image is None and rospy.Time.now() < timeout and not rospy.is_shutdown():
+                rospy.sleep(0.1)
+            
+            if self.latest_image is not None:
+                self.image_ok = True
+                print(f"[Env] First image received! encoding={self.latest_image.encoding}, "
+                      f"size={self.latest_image.width}x{self.latest_image.height}, "
+                      f"timestamp={self.latest_image.header.stamp.to_sec()}", flush=True)
+            else:
+                print(f"[Env] WARNING: No image received on {self.image_topic} within timeout", flush=True)
+                print(f"[Env] Vision features will be zeros. Consider starting fake_camera_publisher.py", flush=True)
+
+    def imageCallback(self, msg):
+        """Store latest image from camera"""
+        self.latest_image = msg
+        if not self.image_ok:
+            self.image_ok = True
+            print(f"[Env] Image callback received: {msg.encoding}, {msg.width}x{msg.height}", flush=True)
+    
+    def getVisionFeatures(self):
+        """Extract vision features from latest image, or return zeros if unavailable"""
+        if not self.use_vision:
+            return np.zeros(self.vision_dim)
+        
+        if self.latest_image is None or not self.image_ok:
+            return np.zeros(self.vision_dim)
+        
+        try:
+            features = self.vision_encoder.encode_image(self.latest_image, device=self.vision_device)
+            return features
+        except Exception as e:
+            if not hasattr(self, '_vision_error_logged'):
+                self._vision_error_logged = True
+                print(f"[Env] Vision feature extraction error: {e}", flush=True)
+            return np.zeros(self.vision_dim)
 
     # def close(self):
     #     """
@@ -191,6 +259,12 @@ class Env():
         for pa in past_action:
             state.append(pa)
         state = state + [rel_dis / diagonal_dis, yaw / 360, rel_theta / 360, diff_angle / 180]
+        
+        # Append vision features if enabled
+        if self.use_vision:
+            vision_feats = self.getVisionFeatures()
+            state = list(state) + list(vision_feats)
+        
         reward = self.setReward(done, arrive)
         return np.asarray(state), reward, done, arrive
 
@@ -239,5 +313,10 @@ class Env():
         state.append(0)
         state.append(0)
         state = state + [rel_dis / diagonal_dis, yaw / 360, rel_theta / 360, diff_angle / 180]
+
+        # Append vision features if enabled
+        if self.use_vision:
+            vision_feats = self.getVisionFeatures()
+            state = list(state) + list(vision_feats)
 
         return np.asarray(state)

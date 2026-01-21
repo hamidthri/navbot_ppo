@@ -18,10 +18,6 @@ import matplotlib.pyplot as plt
 import os, glob
 import torch.nn.functional as F
 
-record_dir = '../../../record'
-if not os.path.exists(record_dir):
-    os.makedirs(record_dir)
-
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
@@ -63,6 +59,18 @@ class PPO:
         # Initialize hyperparameters for training with PPO
         self._init_hyperparameters(hyperparameters)
 
+        # Setup output directories
+        self.method_run_dir = os.path.join(self.output_dir, self.method_name)
+        self.checkpoint_dir = os.path.join(self.method_run_dir, 'checkpoints')
+        self.log_dir_path = os.path.join(self.method_run_dir, 'logs')
+        
+        makepath(self.checkpoint_dir)
+        makepath(self.log_dir_path)
+        
+        print(f"[PPO] Output directory: {self.method_run_dir}", flush=True)
+        print(f"[PPO] Checkpoints: {self.checkpoint_dir}", flush=True)
+        print(f"[PPO] Logs: {self.log_dir_path}", flush=True)
+
         # Extract environment information
         self.env = env
         self.obs_dim = state_dim
@@ -103,10 +111,17 @@ class PPO:
             'Episode_Rewards': [],
             'Iteration': 0,
         }
-        self.writer = SummaryWriter(log_dir=self.log_dir)
+        self.writer = SummaryWriter(log_dir=self.log_dir_path)
+        
+        # Save config file
+        import yaml
+        config_path = os.path.join(self.method_run_dir, 'config.yml')
+        with open(config_path, 'w') as outfile:
+            yaml.dump(self.config, outfile, default_flow_style=False)
+        print(f"[PPO] Config saved to: {config_path}", flush=True)
         
         # Setup episode metrics CSV
-        self.episode_csv_path = f'{record_dir}/{self.method_name}_train_episodes.csv'
+        self.episode_csv_path = os.path.join(self.log_dir_path, f'{self.method_name}_train_episodes.csv')
         import csv
         with open(self.episode_csv_path, 'w', newline='') as f:
             writer = csv.writer(f)
@@ -148,7 +163,7 @@ class PPO:
             self.V, _ = self.evaluate(batch_obs, batch_acts)
             value_func.append(self.V.detach().mean())
             A_k = batch_rtgs - self.V.detach()  # ALG STEP 5
-            f = open(record_dir + '/V_fun' + '.txt', 'a+')
+            f = open(os.path.join(self.log_dir_path, 'V_fun.txt'), 'a+')
             for i in value_func:
                 f.write(str(i))
                 f.write('\n')
@@ -206,8 +221,11 @@ class PPO:
 
             if i_so_far % self.save_freq == 0:
                 epoch = i_so_far // self.save_freq
-                torch.save(self.actor.state_dict(), f'../../../models/{self.exp_id}/ppo_actor_{self.method_name}_{epoch}.pth')
-                torch.save(self.critic.state_dict(), f'../../../models/{self.exp_id}/ppo_critic_{self.method_name}_{epoch}.pth')
+                actor_path = os.path.join(self.checkpoint_dir, f'actor_step{t_so_far:08d}.pth')
+                critic_path = os.path.join(self.checkpoint_dir, f'critic_step{t_so_far:08d}.pth')
+                torch.save(self.actor.state_dict(), actor_path)
+                torch.save(self.critic.state_dict(), critic_path)
+                print(f"[PPO] Saved checkpoint at step {t_so_far}: {actor_path}", flush=True)
 
     def rollout(self, past_action, t_so_far):
         """
@@ -320,7 +338,7 @@ class PPO:
         #
         # 	self.logger['Episode_Rewards'].append(episode_reward / one_round)
 
-        f = open(record_dir + '/ppo' + '.txt', 'a+')
+        f = open(os.path.join(self.log_dir_path, 'ppo.txt'), 'a+')
         for i in self.logger['Episode_Rewards']:
             f.write(str(i))
             f.write('\n')
@@ -462,7 +480,6 @@ class PPO:
         self.lr = 3e-4  # Learning rate of actor optimizer
         self.gamma = 0.99  # Discount factor to be applied when calculating Rewards-To-Go
         self.clip = 0.2  # Recommended 0.2, helps define the threshold to clip the ratio during SGA
-        self.log_dir = 'log'
         # Miscellaneous parameters
         self.render = True  # If we should render during rollout
         self.render_every_i = 10  # Only render every n iterations
@@ -470,6 +487,7 @@ class PPO:
         self.seed = None  # Sets the seed of our program, used for reproducibility of results
         self.exp_id = 'v02_simple_env_60_reward_proportion'
         self.method_name = 'baseline'  # Method identifier for checkpoints and logs
+        self.output_dir = None  # Base output directory (will be set from args)
 
         # Change any default values to custom values for specified hyperparameters
         for param, val in hyperparameters.items():
@@ -483,22 +501,17 @@ class PPO:
             'lr': self.lr,
             'gamma': self.gamma,
             'clip': self.clip,
-            'log_dir': self.log_dir,
             'render': self.render,
             'render_every_i': self.render_every_i,
             'save_freq': self.save_freq,
             'seed': self.seed,
             'exp_id': self.exp_id,
             'method_name': self.method_name,
+            'output_dir': self.output_dir,
         }
 
-        ### create model folder
-        exp_path = f'../../../models/{self.exp_id}'
-        makepath(exp_path)
-        ####
-        import yaml
-        with open(f'../../../models/{self.exp_id}' + '/config.yml', 'w') as outfile:
-            yaml.dump(conf, outfile, default_flow_style=False)
+        ### Save config (will be written after directories are created in __init__)
+        self.config = conf
 
         # Sets the seed if specified
         if self.seed != None:
