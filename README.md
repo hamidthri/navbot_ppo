@@ -30,6 +30,24 @@ ROS1 cannot be installed natively on Ubuntu 24.04. We provide a complete **Docke
 
 ---
 
+## 🏠 **AWS RoboMaker Small House World**
+
+Train your navigation agent in a **realistic indoor house environment** with multiple rooms and furniture.
+
+**Quick Commands:**
+```bash
+# View with GUI (inside container)
+export DISPLAY=:1
+export TURTLEBOT3_MODEL=burger
+roslaunch project navbot_small_house.launch gui:=true
+
+# Headless for training
+roslaunch project navbot_small_house.launch gui:=false
+```
+
+**Features:** Realistic house layout • Compatible with existing PPO code • All sensors working (camera publisher: `/gazebo`) • Same 16-D observation
+
+---
 
 ### Demo GIF
 
@@ -213,7 +231,135 @@ python3 main.py --method_name my_experiment
 
 ---
 
-## 📷 Gazebo Camera Troubleshooting
+## �️ Show Gazebo GUI (For Running Container)
+
+If your container is already running with `gzserver` (headless) and you want to **see the Gazebo GUI** during training rollouts:
+
+### Prerequisites
+1. **X11 socket must be mounted** in container: `-v /tmp/.X11-unix:/tmp/.X11-unix:rw`
+2. **Host X server must allow connections** from container
+
+### Steps to Enable GUI
+
+**On Host (One-Time):**
+```bash
+# Allow X connections from Docker container
+xhost +local:root
+
+# Verify host DISPLAY (should match socket in /tmp/.X11-unix/)
+echo $DISPLAY  # Example output: :1
+ls /tmp/.X11-unix/  # Should show X1 socket
+```
+
+**Inside Container:**
+```bash
+# Verify gzserver is running (headless)
+ps aux | grep gzserver | grep -v grep
+
+# Start gzclient with matching DISPLAY
+export DISPLAY=:1  # Match your host DISPLAY value
+gzclient --verbose &
+
+# Expected output:
+# [Msg] Waiting for master.
+# [Msg] Connected to gazebo master @ http://127.0.0.1:11345
+```
+
+### Verification
+- **gzclient CPU usage should be high (200-400%)** - indicates active rendering
+- Gazebo GUI window should appear on your host display
+- You can now watch the robot navigate in real-time during training
+
+### Performance Note
+⚠️ **gzclient GUI causes significant CPU usage** (300-600% typical). This is normal but may slow down training. If training performance is critical, keep Gazebo headless and visualize using saved models/videos instead.
+
+### Troubleshooting GUI
+| Issue | Solution |
+|-------|----------|
+| No GUI window appears | Check `xhost +local:root` was run on host |
+| "cannot open display" | Verify `DISPLAY` matches host (`echo $DISPLAY` on host) |
+| X socket not found | Container needs `-v /tmp/.X11-unix:/tmp/.X11-unix:rw` mount |
+| OpenGL errors (libGL) | Warnings are OK if gzclient connects to master |
+
+---
+
+## 🎨 Modular Vision Backbones
+
+The system supports **plug-in vision encoders** for feature extraction with frozen weights.
+
+### Supported Backbones
+
+| Backbone | Params | Feature Dim | Use Case |
+|----------|--------|-------------|----------|
+| `mobilenet_v2` | 2.2M | 1280 | Fast, lightweight (default) |
+| `resnet18` | 11.2M | 512 | Balanced speed/quality |
+| `resnet34` | 21.3M | 512 | Better features, slower |
+| `resnet50` | 23.5M | 2048 | High-capacity, slowest |
+| `clip_vit_b32` | - | 512 | Requires `pip install open-clip-torch` |
+
+### CLI Usage
+
+```bash
+# Train with different backbones
+python3 main.py --method_name my_exp \
+  --vision_backbone mobilenet_v2 \
+  --vision_proj_dim 64
+
+# Available options
+--vision_backbone {mobilenet_v2,resnet18,resnet34,resnet50,clip_vit_b32}
+--vision_proj_dim 64  # Projection dimension (default: 64)
+```
+
+### Architecture
+
+```
+Camera Image (RGB)
+  ↓
+Frozen Backbone (e.g., MobileNetV2)  ← NOT trainable
+  ↓
+Vision Features (e.g., 1280-d)
+  ↓
+Trainable ProjectionMLP (256 hidden)  ← Trainable
+  ↓
+Projected Features (64-d)
+  ↓
+Concatenate with Base State (16-d LiDAR+pose)
+  ↓
+Fused State (80-d)
+  ↓
+Trainable Residual MLP Policy/Value  ← Trainable
+```
+
+**Key Design:**
+- **Frozen backbone** preserves pre-trained ImageNet features
+- **Trainable projection** adapts vision to navigation task
+- **Base state (16-d)** unchanged: 10 LiDAR + 2 past_action + 4 goal/pose
+
+### Validation
+
+Test the vision system without training:
+```bash
+# Inside container
+cd /root/catkin_ws/src/project_ppo/src
+python3 validate_vision_system.py
+```
+
+---
+
+## 🧱 Brick Wall Textures
+
+All custom world files now use **Gazebo/Bricks** material for improved visual features:
+- `train_world1.world` ✅
+- `train_world_new.world` ✅  
+- `maze0.world` ✅
+
+Walls are visually distinct (brick texture) instead of flat grey, providing richer camera inputs for vision-based training.
+
+**Files:** `turtlebot3_simulations/turtlebot3_gazebo/worlds/*.world`
+
+---
+
+## � Gazebo Camera Troubleshooting
 
 The robot uses a **real Gazebo camera plugin** for vision-based training. If you encounter issues:
 

@@ -7,6 +7,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 import numpy as np
+from vision_backbones import ProjectionMLP
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 class ResBlock(nn.Module):
@@ -62,13 +63,9 @@ class NetCritic(nn.Module):
         self.vision_proj_dim = vision_proj_dim
         self.base_state_dim = in_dim
         
-        # Trainable vision projection head (1280 -> 64)
+        # Trainable vision projection head (vision_feat_dim -> vision_proj_dim)
         if self.use_vision:
-            self.vision_proj = nn.Sequential(
-                nn.Linear(vision_feat_dim, vision_proj_dim),
-                nn.LayerNorm(vision_proj_dim),
-                nn.LeakyReLU(negative_slope=0.2)
-            )
+            self.vision_proj = ProjectionMLP(vision_feat_dim, vision_proj_dim, dropout=0.1)
             residual_input_dim = self.base_state_dim + vision_proj_dim
             print(f"[NetCritic] Vision mode: base_state={self.base_state_dim}, "
                   f"vision_proj={vision_proj_dim}, fused={residual_input_dim}", flush=True)

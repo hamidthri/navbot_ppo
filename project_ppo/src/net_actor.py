@@ -8,6 +8,8 @@ from torch import nn
 import torch.nn.functional as F
 import numpy as np
 import math
+from vision_backbones import ProjectionMLP
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
@@ -67,13 +69,9 @@ class NetActor(nn.Module):
         self.vision_proj_dim = vision_proj_dim
         self.base_state_dim = in_dim  # Base state (LiDAR + pose + past actions)
         
-        # Trainable vision projection head (1280 -> 64)
+        # Trainable vision projection head (vision_feat_dim -> vision_proj_dim)
         if self.use_vision:
-            self.vision_proj = nn.Sequential(
-                nn.Linear(vision_feat_dim, vision_proj_dim),
-                nn.LayerNorm(vision_proj_dim),
-                nn.LeakyReLU(negative_slope=0.2)
-            )
+            self.vision_proj = ProjectionMLP(vision_feat_dim, vision_proj_dim, dropout=0.1)
             # Fused input: base_state + projected_vision
             residual_input_dim = self.base_state_dim + vision_proj_dim
             print(f"[NetActor] Vision mode: base_state={self.base_state_dim}, "

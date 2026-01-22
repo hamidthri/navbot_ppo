@@ -478,7 +478,9 @@ def main(args):
         'method_name': args.method_name,
         'state_dim': actual_state_dim,
         'output_dir': args.output_dir,
-        'resume': args.resume
+        'resume': args.resume,
+        'vision_backbone': args.vision_backbone,
+        'vision_proj_dim': args.vision_proj_dim,
     }
 
     # Creates the environment we'll be running. If you want to replace with your own

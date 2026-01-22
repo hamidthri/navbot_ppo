@@ -84,15 +84,30 @@ class PPO:
         
         # Initialize frozen vision backbone if using vision
         if self.use_vision:
-            from vision_backbone import FrozenMobileNetBackbone
-            self.vision_backbone = FrozenMobileNetBackbone(use_pretrained=True).to(device)
-            print(f"[PPO] Initialized frozen MobileNetV2 backbone for vision features", flush=True)
+            from vision_backbones import get_backbone
+            self.backbone_name = hyperparameters.get('vision_backbone', 'mobilenet_v2')
+            vision_proj_dim = hyperparameters.get('vision_proj_dim', 64)
+            
+            self.vision_backbone, self.vision_feat_dim, self.vision_preprocess = get_backbone(self.backbone_name, device)
+            print(f"[PPO] Initialized frozen {self.backbone_name} backbone (feat_dim={self.vision_feat_dim})", flush=True)
         else:
             self.vision_backbone = None
+            self.vision_feat_dim = None
+            self.vision_preprocess = None
+            self.backbone_name = None
+            vision_proj_dim = 64  # default, unused
 
         # Initialize actor and critic networks with vision support
-        actor_kwargs = {'use_vision': self.use_vision, 'vision_feat_dim': 1280, 'vision_proj_dim': 64}
-        critic_kwargs = {'use_vision': self.use_vision, 'vision_feat_dim': 1280, 'vision_proj_dim': 64}
+        actor_kwargs = {
+            'use_vision': self.use_vision, 
+            'vision_feat_dim': self.vision_feat_dim if self.use_vision else 1280,
+            'vision_proj_dim': vision_proj_dim
+        }
+        critic_kwargs = {
+            'use_vision': self.use_vision, 
+            'vision_feat_dim': self.vision_feat_dim if self.use_vision else 1280,
+            'vision_proj_dim': vision_proj_dim
+        }
         
         self.actor = policy_class(self.obs_dim, self.act_dim, **actor_kwargs).to(device)
         self.critic = value_func(self.obs_dim, 1, **critic_kwargs).to(device)
@@ -158,7 +173,7 @@ class PPO:
         if self.vision_backbone is not None:
             backbone_trainable = sum(p.numel() for p in self.vision_backbone.parameters() if p.requires_grad)
             backbone_total = sum(p.numel() for p in self.vision_backbone.parameters())
-            print(f"Vision Backbone (MobileNetV2):  {backbone_total:>10,} total, {backbone_trainable:>10,} trainable {'✓ FROZEN' if backbone_trainable == 0 else '✗ ERROR'}", flush=True)
+            print(f"Vision Backbone ({self.backbone_name}): {backbone_total:>10,} total, {backbone_trainable:>10,} trainable {'✓ FROZEN' if backbone_trainable == 0 else '✗ ERROR'}", flush=True)
             assert backbone_trainable == 0, "Vision backbone must be frozen!"
         
         # Actor projection head (should be > 0 if using vision)
@@ -269,9 +284,22 @@ class PPO:
             A_k = (A_k - A_k.mean()) / (A_k.std() + 1e-10)
 
             # Timing: PPO update start
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
             t_update_start = time.time()
             actor_grad_steps = 0
             critic_grad_steps = 0
+            
+            # Capture initial params for delta computation
+            actor_params_before = torch.cat([p.data.flatten() for p in self.actor.parameters()])
+            critic_params_before = torch.cat([p.data.flatten() for p in self.critic.parameters()])
+            
+            # PPO training metrics
+            approx_kl_list = []
+            entropy_list = []
+            clip_frac_list = []
+            actor_grad_norm_list = []
+            critic_grad_norm_list = []
             
             # Update network for n epochs
             for _ in range(self.n_updates_per_iteration):  # ALG STEP 6 & 7
@@ -291,6 +319,22 @@ class PPO:
                 surr1 = ratios * A_k
                 surr2 = torch.clamp(ratios, 1 - self.clip, 1 + self.clip) * A_k
 
+                # Calculate PPO training metrics
+                with torch.no_grad():
+                    # Approx KL divergence
+                    log_ratio = curr_log_probs - batch_log_probs
+                    approx_kl = ((ratios - 1) - log_ratio).mean().item()
+                    approx_kl_list.append(approx_kl)
+                    
+                    # Entropy (policy)
+                    dist = MultivariateNormal(torch.zeros_like(ratios), self.cov_mat)
+                    entropy = dist.entropy().mean().item()
+                    entropy_list.append(entropy)
+                    
+                    # Clip fraction
+                    clip_frac = ((ratios - 1.0).abs() > self.clip).float().mean().item()
+                    clip_frac_list.append(clip_frac)
+
                 # Calculate actor and critic losses.
                 # NOTE: we take the negative min of the surrogate losses because we're trying to maximize
                 # the performance function, but Adam minimizes the loss. So minimizing the negative
@@ -303,18 +347,56 @@ class PPO:
                 # Calculate gradients and perform backward propagation for actor network
                 self.actor_optim.zero_grad()
                 actor_loss.backward(retain_graph=True)
+                
+                # Compute actor gradient norm
+                actor_grad_norm = torch.nn.utils.clip_grad_norm_(self.actor.parameters(), float('inf'))
+                actor_grad_norm_list.append(actor_grad_norm.item())
+                
                 self.actor_optim.step()
                 actor_grad_steps += 1
 
                 # Calculate gradients and perform backward propagation for critic network
                 self.critic_optim.zero_grad()
                 critic_loss.backward()
+                
+                # Compute critic gradient norm
+                critic_grad_norm = torch.nn.utils.clip_grad_norm_(self.critic.parameters(), float('inf'))
+                critic_grad_norm_list.append(critic_grad_norm.item())
+                
                 self.critic_optim.step()
                 critic_grad_steps += 1
 
                 # Log actor loss
                 self.logger['actor_losses'].append(actor_loss.detach())
                 self.logger['critic_losses'].append(critic_loss.detach())
+
+            # Compute parameter delta (L2 norm of change)
+            actor_params_after = torch.cat([p.data.flatten() for p in self.actor.parameters()])
+            critic_params_after = torch.cat([p.data.flatten() for p in self.critic.parameters()])
+            actor_param_delta = torch.norm(actor_params_after - actor_params_before, p=2).item()
+            critic_param_delta = torch.norm(critic_params_after - critic_params_before, p=2).item()
+            
+            # Compute mean PPO metrics
+            mean_approx_kl = np.mean(approx_kl_list) if approx_kl_list else 0.0
+            mean_entropy = np.mean(entropy_list) if entropy_list else 0.0
+            mean_clip_frac = np.mean(clip_frac_list) if clip_frac_list else 0.0
+            mean_actor_grad_norm = np.mean(actor_grad_norm_list) if actor_grad_norm_list else 0.0
+            mean_critic_grad_norm = np.mean(critic_grad_norm_list) if critic_grad_norm_list else 0.0
+            
+            # Assert gradients and params are changing (sanity check)
+            assert mean_actor_grad_norm > 0 and np.isfinite(mean_actor_grad_norm), f"Actor grad norm invalid: {mean_actor_grad_norm}"
+            assert mean_critic_grad_norm > 0 and np.isfinite(mean_critic_grad_norm), f"Critic grad norm invalid: {mean_critic_grad_norm}"
+            assert actor_param_delta > 0, f"Actor params not changing! Delta: {actor_param_delta}"
+            assert critic_param_delta > 0, f"Critic params not changing! Delta: {critic_param_delta}"
+            
+            # Store in logger
+            self.logger['approx_kl'] = mean_approx_kl
+            self.logger['entropy'] = mean_entropy
+            self.logger['clip_frac'] = mean_clip_frac
+            self.logger['actor_grad_norm'] = mean_actor_grad_norm
+            self.logger['critic_grad_norm'] = mean_critic_grad_norm
+            self.logger['actor_param_delta'] = actor_param_delta
+            self.logger['critic_param_delta'] = critic_param_delta
 
             # Timing: PPO update end
             if torch.cuda.is_available():
@@ -395,13 +477,23 @@ class PPO:
             # Track base state observation
             batch_obs.append(obs)
             
+            # Sanity check: base state must be exactly 16-d (10 lidar + 2 past_action + 4 goalpose)
+            assert len(obs) == 16, f"Base state must be 16-d, got {len(obs)} at timestep {t_so_far + t}"
+            
             # Extract vision features ONCE (frozen backbone, no grad)
             if self.use_vision:
                 img = self.env.getLatestImage()
                 if img is not None:
-                    vision_feat = self.vision_backbone.encode_image(img)  # (1280,)
+                    # Preprocess and extract features
+                    with torch.inference_mode():
+                        img_tensor = self.vision_preprocess(img)  # (1, 3, H, W)
+                        vision_feat_tensor = self.vision_backbone(img_tensor)  # (1, feat_dim, ...) or (1, feat_dim)
+                        # Flatten to (feat_dim,) if needed
+                        if vision_feat_tensor.dim() > 2:
+                            vision_feat_tensor = torch.nn.functional.adaptive_avg_pool2d(vision_feat_tensor, (1, 1))
+                        vision_feat = vision_feat_tensor.squeeze().cpu().numpy()  # (feat_dim,)
                 else:
-                    vision_feat = np.zeros(1280, dtype=np.float32)
+                    vision_feat = np.zeros(self.vision_feat_dim, dtype=np.float32)
                 batch_vision_feats.append(vision_feat)
             else:
                 vision_feat = None
@@ -725,6 +817,15 @@ class PPO:
         actor_grad_steps = self.logger.get('actor_grad_steps', 0)
         critic_grad_steps = self.logger.get('critic_grad_steps', 0)
         steps_per_sec = self.timesteps_per_batch / iter_time if iter_time > 0 else 0.0
+        
+        # Extract PPO validity metrics
+        approx_kl = self.logger.get('approx_kl', 0.0)
+        entropy = self.logger.get('entropy', 0.0)
+        clip_frac = self.logger.get('clip_frac', 0.0)
+        actor_grad_norm = self.logger.get('actor_grad_norm', 0.0)
+        critic_grad_norm = self.logger.get('critic_grad_norm', 0.0)
+        actor_param_delta = self.logger.get('actor_param_delta', 0.0)
+        critic_param_delta = self.logger.get('critic_param_delta', 0.0)
 
         # Print logging statements
         print(flush=True)
@@ -744,6 +845,10 @@ class PPO:
         print(f"---", flush=True)
         print(f"Rollout Time: {rollout_time:.2f}s | Update Time: {update_time:.2f}s | Iteration Time: {iter_time:.2f}s", flush=True)
         print(f"Steps/sec: {steps_per_sec:.1f} | Actor Grad Steps: {actor_grad_steps} | Critic Grad Steps: {critic_grad_steps}", flush=True)
+        print(f"---", flush=True)
+        print(f"PPO Metrics: KL={approx_kl:.6f} | Entropy={entropy:.4f} | ClipFrac={clip_frac:.4f}", flush=True)
+        print(f"Grad Norms: Actor={actor_grad_norm:.4f} | Critic={critic_grad_norm:.4f}", flush=True)
+        print(f"Param Delta: Actor={actor_param_delta:.6f} | Critic={critic_param_delta:.6f}", flush=True)
         print(f"================================================================================", flush=True)
         print(flush=True)
         
@@ -765,6 +870,15 @@ class PPO:
         self.writer.add_scalar("perf/steps_per_sec", steps_per_sec, i_so_far)
         self.writer.add_scalar("perf/actor_grad_steps", actor_grad_steps, i_so_far)
         self.writer.add_scalar("perf/critic_grad_steps", critic_grad_steps, i_so_far)
+        
+        # Log PPO validity metrics to TensorBoard
+        self.writer.add_scalar("ppo/approx_kl", approx_kl, i_so_far)
+        self.writer.add_scalar("ppo/entropy", entropy, i_so_far)
+        self.writer.add_scalar("ppo/clip_frac", clip_frac, i_so_far)
+        self.writer.add_scalar("ppo/actor_grad_norm", actor_grad_norm, i_so_far)
+        self.writer.add_scalar("ppo/critic_grad_norm", critic_grad_norm, i_so_far)
+        self.writer.add_scalar("ppo/actor_param_delta", actor_param_delta, i_so_far)
+        self.writer.add_scalar("ppo/critic_param_delta", critic_param_delta, i_so_far)
 
         ## take all logging data
 
