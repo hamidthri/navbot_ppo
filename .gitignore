@@ -117,3 +117,4 @@ project_ppo/src/models/
 # Runtime output and training artifacts
 project_ppo/src/record/
 project_ppo/src/summary/
+project_ppo/captures/
