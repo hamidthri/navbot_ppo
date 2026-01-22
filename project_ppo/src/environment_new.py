@@ -21,7 +21,7 @@ from wall_penalty import pen_wall
 diagonal_dis = math.sqrt(2) * (3.8 + 3.8)
 goal_model_dir = os.path.join(os.path.split(os.path.realpath(__file__))[0], '..', '..', 'turtlebot3_simulations',
                               'turtlebot3_gazebo', 'models', 'Target', 'model.sdf')
-len_batch = 6
+len_batch = 36  # 360 laser points / 36 = 10 picked laser features
 
 class Env():
     def __init__(self, is_training, use_vision=False, vision_dim=64):
@@ -51,27 +51,12 @@ class Env():
         self.vision_dim = vision_dim
         self.latest_image = None
         self.image_ok = False
-        self.vision_encoder = None
         
         if self.use_vision:
-            print(f"[Env] Initializing vision mode with feature dim={vision_dim}", flush=True)
-            # Try to import and initialize vision encoder
-            try:
-                from vision_encoder import VisionEncoder
-                import torch
-                device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-                self.vision_encoder = VisionEncoder(output_dim=vision_dim, use_pretrained=True)
-                self.vision_encoder = self.vision_encoder.to(device)
-                self.vision_encoder.eval()
-                self.vision_device = device
-                print(f"[Env] Vision encoder loaded on {device}", flush=True)
-            except Exception as e:
-                print(f"[Env] ERROR loading vision encoder: {e}", flush=True)
-                self.use_vision = False
-            
+            print(f"[Env] Initializing vision mode (raw image only, no encoder in env)", flush=True)
             # Subscribe to camera topic
-            # Real Gazebo camera topic: /robot_camera/image_raw (published by /gazebo plugin)
-            self.image_topic = '/robot_camera/image_raw'
+            # Real Gazebo camera topic: /camera/rgb/image_raw (published by /gazebo plugin)
+            self.image_topic = '/camera/rgb/image_raw'
             self.sub_camera = rospy.Subscriber(self.image_topic, Image, self.imageCallback)
             print(f"[Env] Subscribed to {self.image_topic}", flush=True)
             
@@ -91,28 +76,35 @@ class Env():
                 print(f"[Env] Vision features will be zeros. Consider starting fake_camera_publisher.py", flush=True)
 
     def imageCallback(self, msg):
-        """Store latest image from camera"""
-        self.latest_image = msg
-        if not self.image_ok:
-            self.image_ok = True
-            print(f"[Env] Image callback received: {msg.encoding}, {msg.width}x{msg.height}", flush=True)
+        """Store latest image from camera as numpy array"""
+        try:
+            from cv_bridge import CvBridge
+            bridge = CvBridge()
+            # Convert ROS Image to numpy uint8 HxWx3 (BGR)
+            cv_image = bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
+            # Convert BGR to RGB
+            import cv2
+            self.latest_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
+            if not self.image_ok:
+                self.image_ok = True
+                print(f"[Env] Image callback received: {msg.encoding}, {msg.width}x{msg.height}, converted to RGB numpy array", flush=True)
+        except Exception as e:
+            if not hasattr(self, '_img_convert_error_logged'):
+                self._img_convert_error_logged = True
+                print(f"[Env] Image conversion error: {e}", flush=True)
+    
+    def getLatestImage(self):
+        """Return latest image as numpy uint8 HxWx3 RGB, or None if unavailable"""
+        if not self.use_vision or self.latest_image is None:
+            return None
+        return self.latest_image
     
     def getVisionFeatures(self):
-        """Extract vision features from latest image, or return zeros if unavailable"""
+        """Deprecated - vision features now computed in policy network"""
+        # Return zeros for backward compatibility
         if not self.use_vision:
             return np.zeros(self.vision_dim)
-        
-        if self.latest_image is None or not self.image_ok:
-            return np.zeros(self.vision_dim)
-        
-        try:
-            features = self.vision_encoder.encode_image(self.latest_image, device=self.vision_device)
-            return features
-        except Exception as e:
-            if not hasattr(self, '_vision_error_logged'):
-                self._vision_error_logged = True
-                print(f"[Env] Vision feature extraction error: {e}", flush=True)
-            return np.zeros(self.vision_dim)
+        return np.zeros(self.vision_dim)
 
     # def close(self):
     #     """
@@ -295,18 +287,27 @@ class Env():
 
         state, rel_dis, yaw, rel_theta, diff_angle, done, arrive = self.getState(data)
         state = [i / 3.5 for i in state]
-        # state = Pick(state, len_batch)
-        for pa in past_action:
-            state.append(pa)
-        state = state + [rel_dis / diagonal_dis, yaw / 360, rel_theta / 360, diff_angle / 180]
         
-        # Append vision features if enabled
-        if self.use_vision:
-            vision_feats = self.getVisionFeatures()
-            state = list(state) + list(vision_feats)
+        # Uniform sampling: select 10 evenly-spaced samples from normalized scan
+        L = len(state)
+        indices = [int(i * L / 10) for i in range(10)]
+        lidar_features = [state[idx] for idx in indices]
+        
+        # Build base state: 10 lidar + 2 past_action + 4 goalpose
+        assert len(lidar_features) == 10, f"LiDAR features must be 10, got {len(lidar_features)}"
+        base_state = lidar_features.copy()
+        for pa in past_action:
+            base_state.append(pa)
+        base_state = base_state + [rel_dis / diagonal_dis, yaw / 360, rel_theta / 360, diff_angle / 180]
+        
+        # Assertion: Verify base state is exactly 16-d (10 lidar + 2 past_action + 4 goalpose)
+        assert len(base_state) == 16, f"Base state must be 16-d, got {len(base_state)}"
+        
+        # Vision mode: return base state vector only (NO vision features appended here)
+        # Image will be handled separately in PPO rollout
         
         reward = self.setReward(done, arrive)
-        return np.asarray(state), reward, done, arrive
+        return np.asarray(base_state), reward, done, arrive
 
     def reset(self):
         # Reset the env
@@ -359,14 +360,23 @@ class Env():
         
         state, rel_dis, yaw, rel_theta, diff_angle, done, arrive = self.getState(data)
         state = [i / 3.5 for i in state]
-        # state = Pick(state, len_batch)
-        state.append(0)
-        state.append(0)
-        state = state + [rel_dis / diagonal_dis, yaw / 360, rel_theta / 360, diff_angle / 180]
+        
+        # Uniform sampling: select 10 evenly-spaced samples from normalized scan
+        L = len(state)
+        indices = [int(i * L / 10) for i in range(10)]
+        lidar_features = [state[idx] for idx in indices]
+        
+        # Build base state: 10 lidar + 2 past_action + 4 goalpose
+        assert len(lidar_features) == 10, f"LiDAR features must be 10, got {len(lidar_features)}"
+        base_state = lidar_features.copy()
+        base_state.append(0)  # past_action[0]
+        base_state.append(0)  # past_action[1]
+        base_state = base_state + [rel_dis / diagonal_dis, yaw / 360, rel_theta / 360, diff_angle / 180]
 
-        # Append vision features if enabled
-        if self.use_vision:
-            vision_feats = self.getVisionFeatures()
-            state = list(state) + list(vision_feats)
+        # Assertion: Verify base state is exactly 16-d (10 lidar + 2 past_action + 4 goalpose)
+        assert len(base_state) == 16, f"Base state must be 16-d, got {len(base_state)}"
 
-        return np.asarray(state)
+        # Vision mode: return base state vector only (NO vision features appended here)
+        # Image will be handled separately in PPO rollout
+
+        return np.asarray(base_state)

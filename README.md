@@ -323,6 +323,343 @@ docker cp navbot-ppo-dev:/tmp/camera_test.png ./camera_test.png
 
 ---
 
+## 🔧 Blockers and Fixes
+
+### 1. X Authorization Error After Container Restart
+
+**Symptom:**
+```
+Authorization required, but no authorization protocol specified
+Error: cannot open display: :1
+Aborted (core dumped)
+```
+
+**Fix:**
+Use `xvfb-run` to create a virtual display without authorization issues:
+```bash
+# Stop existing Gazebo
+pkill -9 gzserver gzclient
+
+# Launch with xvfb (no GUI, but camera still works)
+xvfb-run -a -s '-screen 0 1024x768x24' roslaunch turtlebot3_gazebo turtlebot3_stage_1.launch
+```
+
+**Why it works:** xvfb provides an isolated virtual X server that doesn't require xauth permissions.
+
+---
+
+### 2. Camera Plugin Prerequisites
+
+**Required Environment Variables:**
+```bash
+export GAZEBO_PLUGIN_PATH=/opt/ros/noetic/lib:/usr/lib/x86_64-linux-gnu/gazebo-11/plugins
+export LD_LIBRARY_PATH=/opt/ros/noetic/lib:/usr/lib/x86_64-linux-gnu/gazebo-11/plugins:$LD_LIBRARY_PATH
+```
+
+**Verify dependencies:**
+```bash
+ldd /opt/ros/noetic/lib/libgazebo_ros_camera.so | grep "not found"
+# Should be empty if paths are correct
+```
+
+**Launch requirements:**
+- `headless=false` or `headless=true` with xvfb
+- Camera plugin needs rendering context even without GUI
+
+---
+
+### 3. Target Flicker / Disappearing
+
+**Symptoms:**
+- Goal marker appears then disappears
+- Training episodes fail immediately
+- gzclient consuming 400%+ CPU
+
+**Root Causes:**
+1. `gzclient` (Gazebo GUI) causing CPU spike and Gazebo lag
+2. `reset_simulation` hanging when called while physics is paused
+
+**Fixes:**
+
+**A) Disable GUI in launch file:**
+```xml
+<!-- In turtlebot3_stage_1.launch -->
+<arg name="gui" value="false"/>
+<arg name="headless" value="true"/>
+```
+
+**B) Use reset_world instead of reset_simulation:**
+```python
+# In environment reset() - use lightweight reset
+self.reset_world()  # Instead of self.reset_proxy() which calls reset_simulation
+```
+
+**C) Remove pause around reset:**
+```python
+# OLD (causes hang):
+self.pause_proxy()
+self.reset_proxy()  # Hangs if physics paused
+self.unpause_proxy()
+
+# NEW (works):
+self.reset_world()  # No pause needed, doesn't hang
+```
+
+**Verify target stability:**
+```bash
+# After env.reset(), check target pose remains stable
+rostopic echo /gazebo/model_states | grep target -A3
+```
+
+---
+
+### 4. Evaluation Robustness
+
+**Ensure services/topics available before episodes:**
+```python
+# Wait for critical services
+rospy.wait_for_service('/gazebo/reset_world')
+rospy.wait_for_service('/gazebo/spawn_sdf_model')
+rospy.wait_for_service('/gazebo/delete_model')
+
+# Wait for critical topics
+rospy.wait_for_message('/scan', LaserScan, timeout=5)
+rospy.wait_for_message('/odom', Odometry, timeout=5)
+rospy.wait_for_message('/robot_camera/image_raw', Image, timeout=5)
+```
+
+**Eval with proper output structure:**
+```bash
+# Eval checkpoints use runs/<method>/checkpoints/ and runs/<method>/logs/
+python3 main.py --eval --eval_episodes 20 --method_name vision_mobilenet64_concat
+```
+
+---
+
+## 🚀 How to Run (Docker)
+
+### Prerequisites
+
+Ensure the Docker container `navbot-ppo` is running and Gazebo simulation is launched.
+
+### 1. Start Gazebo Simulation (Headless with Camera)
+
+Launch Gazebo with xvfb to avoid X authorization issues while maintaining camera functionality:
+
+```bash
+docker exec -d navbot-ppo bash -c "
+  export GAZEBO_PLUGIN_PATH=/opt/ros/noetic/lib:/usr/lib/x86_64-linux-gnu/gazebo-11/plugins &&
+  export LD_LIBRARY_PATH=/opt/ros/noetic/lib:/usr/lib/x86_64-linux-gnu/gazebo-11/plugins:\$LD_LIBRARY_PATH &&
+  source /opt/ros/noetic/setup.bash &&
+  source /root/catkin_ws/devel/setup.bash &&
+  xvfb-run -a -s '-screen 0 1024x768x24' roslaunch turtlebot3_gazebo turtlebot3_stage_1.launch
+"
+```
+
+**Note:** Wait ~15 seconds for Gazebo to fully initialize before starting training.
+
+---
+
+### 2. Start Training
+
+**Quick Test (10k timesteps, ~10-15 minutes):**
+```bash
+docker exec navbot-ppo bash -lc "
+  source /opt/ros/noetic/setup.bash &&
+  source /root/catkin_ws/devel/setup.bash &&
+  cd /root/catkin_ws/src/project_ppo/src &&
+  python3 main.py --method_name test_quick \
+    --timesteps_per_episode 500 \
+    --steps_per_iteration 5000 \
+    --max_timesteps 10000 \
+    --save_every_iterations 2
+"
+```
+
+**Full Training (100k timesteps, standard benchmark):**
+```bash
+docker exec navbot-ppo bash -lc "
+  source /opt/ros/noetic/setup.bash &&
+  source /root/catkin_ws/devel/setup.bash &&
+  cd /root/catkin_ws/src/project_ppo/src &&
+  python3 main.py --method_name vision_mobilenet64_concat \
+    --timesteps_per_episode 500 \
+    --steps_per_iteration 5000 \
+    --max_timesteps 100000 \
+    --save_every_iterations 2
+"
+```
+
+**Resume from Checkpoint:**
+```bash
+docker exec navbot-ppo bash -lc "
+  source /opt/ros/noetic/setup.bash &&
+  source /root/catkin_ws/devel/setup.bash &&
+  cd /root/catkin_ws/src/project_ppo/src &&
+  python3 main.py --method_name vision_mobilenet64_concat \
+    --timesteps_per_episode 500 \
+    --steps_per_iteration 5000 \
+    --max_timesteps 100000 \
+    --save_every_iterations 2 \
+    --resume
+"
+```
+
+**Training Schedule:**
+- **Max episode steps:** 500 timesteps
+- **Steps per PPO iteration (batch):** 5000 env timesteps
+- **Total training:** 100,000 env timesteps (20 iterations)
+- **Checkpoints saved:** Every 2 iterations (every 10,000 steps)
+- **Default behavior:** Train from scratch (ignore existing checkpoints)
+- **Resume behavior:** Use `--resume` flag to load latest checkpoint
+
+**Output Structure:**
+```
+/root/catkin_ws/runs/<method_name>/
+├── checkpoints/           # Model checkpoints
+│   ├── actor_iter0002_step00010000.pth
+│   ├── critic_iter0002_step00010000.pth
+│   ├── actor_iter0004_step00020000.pth
+│   └── ...
+├── logs/                  # CSV logs for episodes
+│   └── <method>_train_episodes.csv
+└── tb/                    # TensorBoard event files
+    └── events.out.tfevents.*
+```
+
+**TensorBoard Metrics Logged:**
+- `train/success_rate` - Episodes reaching goal
+- `train/collision_rate` - Episodes ending in collision
+- `train/timeout_rate` - Episodes reaching max steps
+- `train/mean_return` - Average episode reward
+- `train/mean_ep_length` - Average episode timesteps
+- `train/mean_ep_time` - Average episode wall-clock time
+- `loss/actor` - Actor network loss
+- `loss/critic` - Critic network loss
+- `train/timesteps` - Total environment steps so far
+
+---
+
+### 3. Evaluation
+
+Run evaluation on trained models (loads latest checkpoint automatically):
+
+```bash
+docker exec navbot-ppo bash -lc "
+  source /opt/ros/noetic/setup.bash &&
+  source /root/catkin_ws/devel/setup.bash &&
+  cd /root/catkin_ws/src/project_ppo/src &&
+  python3 main.py --eval \
+    --eval_episodes 20 \
+    --method_name vision_mobilenet64_concat
+"
+```
+
+**Evaluation Output:**
+- Metrics saved to: `/root/catkin_ws/runs/<method>/logs/<method>_eval_episodes.csv`
+- Includes: episode rewards, lengths, times, success/collision/timeout outcomes
+
+---
+
+### 4. TensorBoard Monitoring
+
+**Start TensorBoard:**
+```bash
+docker exec -d navbot-ppo bash -c "
+  tensorboard --logdir /root/catkin_ws/runs/vision_mobilenet64_concat/tb \
+    --bind_all --port 6006
+"
+```
+
+**Access TensorBoard:**
+- Open browser: `http://localhost:6006`
+- View training curves in real-time
+- Compare multiple runs by using parent directory: `--logdir /root/catkin_ws/runs`
+
+**Verify Event Files Exist:**
+```bash
+docker exec navbot-ppo bash -c "
+  find /root/catkin_ws/runs -name 'events.out.tfevents.*' -type f | head -5
+"
+```
+
+---
+
+### 5. Verify Configuration (Before Long Runs)
+
+Use the verification script to confirm training parameters:
+
+```bash
+docker exec navbot-ppo bash -lc "
+  cd /root/catkin_ws/src/project_ppo/src &&
+  python3 verify_config.py --method_name vision_mobilenet64_concat \
+    --timesteps_per_episode 500 \
+    --steps_per_iteration 5000 \
+    --max_timesteps 100000 \
+    --save_every_iterations 2
+"
+```
+
+This displays:
+- Schedule configuration
+- Expected iterations and checkpoints
+- Resume behavior
+- Output directory structure
+- Expected checkpoint names
+- TensorBoard scalars
+
+---
+
+### 6. Monitoring Training Progress
+
+**View live training log:**
+```bash
+docker exec navbot-ppo bash -c "tail -f /root/catkin_ws/src/project_ppo/src/nohup.out"
+```
+
+**Check iteration summaries:**
+```bash
+docker exec navbot-ppo bash -c "
+  grep -E 'Iteration|Episodes|Success|Collision|Timeout|Mean' \
+    /root/catkin_ws/src/project_ppo/src/nohup.out | tail -40
+"
+```
+
+**List checkpoints:**
+```bash
+docker exec navbot-ppo bash -c "
+  ls -lh /root/catkin_ws/runs/vision_mobilenet64_concat/checkpoints/
+"
+```
+
+**Check TensorBoard directory:**
+```bash
+docker exec navbot-ppo bash -c "
+  ls -lh /root/catkin_ws/runs/vision_mobilenet64_concat/tb/
+"
+```
+
+---
+
+### 7. Cleanup
+
+**Stop training:**
+```bash
+docker exec navbot-ppo bash -c "pkill -f 'main.py'"
+```
+
+**Stop Gazebo:**
+```bash
+docker exec navbot-ppo bash -c "pkill -9 gzserver gzclient roslaunch rosmaster"
+```
+
+**Remove run data:**
+```bash
+docker exec navbot-ppo bash -c "rm -rf /root/catkin_ws/runs/<method_name>"
+```
+
+---
+
 ## Running the Demo
 ```bash
 roslaunch turtlebot3_gazebo turtlebot3_stage_1.launch

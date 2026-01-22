@@ -28,6 +28,9 @@ def get_args():
 	parser.add_argument('--output_dir', dest='output_dir', type=str, default=None)     # base output directory for runs
 	parser.add_argument('--timesteps_per_episode', dest='timesteps_per_episode', type=int, default=500)  # max timesteps per episode
 	parser.add_argument('--max_timesteps', dest='max_timesteps', type=int, default=5000)  # total training timesteps
+	parser.add_argument('--steps_per_iteration', dest='steps_per_iteration', type=int, default=5000)  # timesteps per PPO iteration (batch)
+	parser.add_argument('--save_every_iterations', dest='save_every_iterations', type=int, default=2)  # save checkpoint every N iterations
+	parser.add_argument('--resume', dest='resume', action='store_true', default=False)  # resume from existing checkpoint
 	parser.add_argument('--dry_run_vision', dest='dry_run_vision', action='store_true', default=False)  # dry-run mode without Gazebo
 
 	args = parser.parse_args()

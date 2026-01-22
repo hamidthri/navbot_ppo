@@ -51,28 +51,84 @@ class NetCritic(nn.Module):
                  in_dim,
                  out_dim,
                  n_neurons=512,
+                 use_vision=False,
+                 vision_feat_dim=1280,
+                 vision_proj_dim=64,
                  **kwargs):
         super(NetCritic, self).__init__()
 
+        self.use_vision = use_vision
+        self.vision_feat_dim = vision_feat_dim
+        self.vision_proj_dim = vision_proj_dim
+        self.base_state_dim = in_dim
+        
+        # Trainable vision projection head (1280 -> 64)
+        if self.use_vision:
+            self.vision_proj = nn.Sequential(
+                nn.Linear(vision_feat_dim, vision_proj_dim),
+                nn.LayerNorm(vision_proj_dim),
+                nn.LeakyReLU(negative_slope=0.2)
+            )
+            residual_input_dim = self.base_state_dim + vision_proj_dim
+            print(f"[NetCritic] Vision mode: base_state={self.base_state_dim}, "
+                  f"vision_proj={vision_proj_dim}, fused={residual_input_dim}", flush=True)
+        else:
+            self.vision_proj = None
+            residual_input_dim = in_dim
 
-        self.bn1 = nn.BatchNorm1d(in_dim)
-        self.rb1 = ResBlock(in_dim, in_dim)
-        self.rb2 = ResBlock(in_dim + in_dim, in_dim + in_dim)
-        # self.rb3 = ResBlock(n_neurons + in_dim, n_neurons)
-        self.out = nn.Linear(in_dim + in_dim, out_dim)
+        # Existing residual MLP head - use fused dimension
+        self.bn1 = nn.BatchNorm1d(residual_input_dim)
+        self.rb1 = ResBlock(residual_input_dim, residual_input_dim)
+        self.rb2 = ResBlock(residual_input_dim + residual_input_dim, residual_input_dim + residual_input_dim)
+        self.out = nn.Linear(residual_input_dim + residual_input_dim, out_dim)
         self.do = nn.Dropout(p=.1, inplace=False)
 
-    def forward(self, obs):
-
+    def forward(self, obs, vision_feat=None):
+        """
+        Forward pass with optional vision features.
+        
+        Args:
+            obs: Base state vector (B, base_state_dim) or (base_state_dim,)
+            vision_feat: Vision features (B, 1280) or (1280,) from frozen backbone (optional)
+        
+        Returns:
+            value: (B, out_dim)
+        """
         if isinstance(obs, np.ndarray):
             obs = torch.tensor(obs, dtype=torch.float)
         obs = obs.to(device)
+        
+        # Ensure obs has batch dimension
+        needs_unsqueeze = (obs.dim() == 1)
+        if needs_unsqueeze:
+            obs = obs.unsqueeze(0)
+        
+        # Fuse vision features if provided
+        if self.use_vision:
+            if vision_feat is None:
+                # Fallback: use zeros if no vision features provided
+                vision_feat = torch.zeros(obs.shape[0], self.vision_feat_dim, dtype=torch.float, device=device)
+            else:
+                if isinstance(vision_feat, np.ndarray):
+                    vision_feat = torch.tensor(vision_feat, dtype=torch.float)
+                vision_feat = vision_feat.to(device)
+                
+                # Ensure vision_feat has batch dimension
+                if vision_feat.dim() == 1:
+                    vision_feat = vision_feat.unsqueeze(0)
+            
+            # Project vision features (trainable)
+            vision_proj = self.vision_proj(vision_feat)
+            
+            # Concatenate base state + projected vision
+            X0 = torch.cat([obs, vision_proj], dim=-1)
+        else:
+            X0 = obs
 
-        X0 = obs
-        # X0 = self.bn1(X)
+        # Existing residual head (unchanged)
+        # X0 = self.bn1(X0)
         X = self.rb1(X0, True)
         X = self.rb2(torch.cat([X0, X], dim=-1), True)
-        # X = self.rb3(torch.cat([X0, X], dim=-1), True)
         output = self.out(X)
         return output
 

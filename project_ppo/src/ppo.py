@@ -63,26 +63,46 @@ class PPO:
         self.method_run_dir = os.path.join(self.output_dir, self.method_name)
         self.checkpoint_dir = os.path.join(self.method_run_dir, 'checkpoints')
         self.log_dir_path = os.path.join(self.method_run_dir, 'logs')
+        self.tb_dir_path = os.path.join(self.method_run_dir, 'tb')
         
         makepath(self.checkpoint_dir)
         makepath(self.log_dir_path)
+        makepath(self.tb_dir_path)
         
         print(f"[PPO] Output directory: {self.method_run_dir}", flush=True)
         print(f"[PPO] Checkpoints: {self.checkpoint_dir}", flush=True)
         print(f"[PPO] Logs: {self.log_dir_path}", flush=True)
+        print(f"[PPO] TensorBoard: {self.tb_dir_path}", flush=True)
 
         # Extract environment information
         self.env = env
         self.obs_dim = state_dim
         self.act_dim = action_dim
+        
+        # Check if using vision mode
+        self.use_vision = hasattr(env, 'use_vision') and env.use_vision
+        
+        # Initialize frozen vision backbone if using vision
+        if self.use_vision:
+            from vision_backbone import FrozenMobileNetBackbone
+            self.vision_backbone = FrozenMobileNetBackbone(use_pretrained=True).to(device)
+            print(f"[PPO] Initialized frozen MobileNetV2 backbone for vision features", flush=True)
+        else:
+            self.vision_backbone = None
 
-        # Initialize actor and critic networks
-        self.actor = policy_class(self.obs_dim, self.act_dim).to(device)  # ALG STEP 1
-        self.critic = value_func(self.obs_dim, 1).to(device)
+        # Initialize actor and critic networks with vision support
+        actor_kwargs = {'use_vision': self.use_vision, 'vision_feat_dim': 1280, 'vision_proj_dim': 64}
+        critic_kwargs = {'use_vision': self.use_vision, 'vision_feat_dim': 1280, 'vision_proj_dim': 64}
+        
+        self.actor = policy_class(self.obs_dim, self.act_dim, **actor_kwargs).to(device)
+        self.critic = value_func(self.obs_dim, 1, **critic_kwargs).to(device)
 
-        # Initialize optimizers for actor and critic
+        # Initialize optimizers (vision projection params are inside actor/critic)
         self.actor_optim = Adam(self.actor.parameters(), lr=self.lr)
         self.critic_optim = Adam(self.critic.parameters(), lr=self.lr)
+        
+        # Verify trainable parameters
+        self._verify_trainable_params()
 
         # Initialize the covariance matrix used to query the actor for actions
         self.cov_var = torch.full(size=(self.act_dim,), fill_value=0.8).to(device)
@@ -111,7 +131,7 @@ class PPO:
             'Episode_Rewards': [],
             'Iteration': 0,
         }
-        self.writer = SummaryWriter(log_dir=self.log_dir_path)
+        self.writer = SummaryWriter(log_dir=self.tb_dir_path)
         
         # Save config file
         import yaml
@@ -127,6 +147,58 @@ class PPO:
             writer = csv.writer(f)
             writer.writerow(['episode', 'timestep', 'success', 'collision', 'timeout', 'length', 'return', 'path_length', 'time'])
         self.episode_count = 0
+    
+    def _verify_trainable_params(self):
+        """Verify and print trainable parameter counts"""
+        print(f"\n{'='*70}", flush=True)
+        print(f"[PPO] Trainable Parameter Verification", flush=True)
+        print(f"{'='*70}", flush=True)
+        
+        # Vision backbone (should be 0)
+        if self.vision_backbone is not None:
+            backbone_trainable = sum(p.numel() for p in self.vision_backbone.parameters() if p.requires_grad)
+            backbone_total = sum(p.numel() for p in self.vision_backbone.parameters())
+            print(f"Vision Backbone (MobileNetV2):  {backbone_total:>10,} total, {backbone_trainable:>10,} trainable {'✓ FROZEN' if backbone_trainable == 0 else '✗ ERROR'}", flush=True)
+            assert backbone_trainable == 0, "Vision backbone must be frozen!"
+        
+        # Actor projection head (should be > 0 if using vision)
+        if self.use_vision and hasattr(self.actor, 'vision_proj'):
+            actor_proj_trainable = sum(p.numel() for p in self.actor.vision_proj.parameters() if p.requires_grad)
+            actor_proj_total = sum(p.numel() for p in self.actor.vision_proj.parameters())
+            print(f"Actor Projection Head:           {actor_proj_total:>10,} total, {actor_proj_trainable:>10,} trainable {'✓ TRAINABLE' if actor_proj_trainable > 0 else '✗ ERROR'}", flush=True)
+            assert actor_proj_trainable > 0, "Actor projection head must be trainable!"
+        
+        # Actor residual head
+        actor_residual_params = []
+        for name, param in self.actor.named_parameters():
+            if 'vision_proj' not in name:
+                actor_residual_params.append(param)
+        actor_residual_trainable = sum(p.numel() for p in actor_residual_params if p.requires_grad)
+        actor_residual_total = sum(p.numel() for p in actor_residual_params)
+        print(f"Actor Residual Head:             {actor_residual_total:>10,} total, {actor_residual_trainable:>10,} trainable {'✓ TRAINABLE' if actor_residual_trainable > 0 else '✗ ERROR'}", flush=True)
+        
+        # Critic projection head (should be > 0 if using vision)
+        if self.use_vision and hasattr(self.critic, 'vision_proj'):
+            critic_proj_trainable = sum(p.numel() for p in self.critic.vision_proj.parameters() if p.requires_grad)
+            critic_proj_total = sum(p.numel() for p in self.critic.vision_proj.parameters())
+            print(f"Critic Projection Head:          {critic_proj_total:>10,} total, {critic_proj_trainable:>10,} trainable {'✓ TRAINABLE' if critic_proj_trainable > 0 else '✗ ERROR'}", flush=True)
+            assert critic_proj_trainable > 0, "Critic projection head must be trainable!"
+        
+        # Critic residual head
+        critic_residual_params = []
+        for name, param in self.critic.named_parameters():
+            if 'vision_proj' not in name:
+                critic_residual_params.append(param)
+        critic_residual_trainable = sum(p.numel() for p in critic_residual_params if p.requires_grad)
+        critic_residual_total = sum(p.numel() for p in critic_residual_params)
+        print(f"Critic Residual Head:            {critic_residual_total:>10,} total, {critic_residual_trainable:>10,} trainable {'✓ TRAINABLE' if critic_residual_trainable > 0 else '✗ ERROR'}", flush=True)
+        
+        # Total
+        total_trainable = sum(p.numel() for p in self.actor.parameters() if p.requires_grad) + \
+                         sum(p.numel() for p in self.critic.parameters() if p.requires_grad)
+        print(f"{'-'*70}", flush=True)
+        print(f"Total Trainable Parameters:      {total_trainable:>10,}", flush=True)
+        print(f"{'='*70}\n", flush=True)
 
     def learn(self, total_timesteps, past_action):
         """
@@ -140,16 +212,41 @@ class PPO:
 		"""
         print(f"Learning... Running {self.max_timesteps_per_episode} timesteps per episode, ", end='')
         print(f"{self.timesteps_per_batch} timesteps per batch for a total of {total_timesteps} timesteps")
+        print(f"[Training Schedule] Episodes collect up to {self.max_timesteps_per_episode} steps each.", flush=True)
+        print(f"[Training Schedule] Each iteration collects {self.timesteps_per_batch} environment steps before PPO update.", flush=True)
+        print(f"[Training Schedule] Iteration summary prints after every {self.timesteps_per_batch} steps.", flush=True)
+        print(f"[Training Schedule] Checkpoints save every {self.save_freq} iterations.", flush=True)
+        print(f"[Training Schedule] Total budget: {total_timesteps} timesteps = {total_timesteps // self.timesteps_per_batch} iterations.", flush=True)
+        
+        # Compute PPO update steps per iteration
+        # Since we use full-batch updates (no minibatching), each update epoch processes the entire batch
+        grad_steps_per_iter = self.n_updates_per_iteration  # Both actor and critic updated this many times
+        print(f"[PPO Update] Full-batch updates: {self.n_updates_per_iteration} gradient steps per iteration (both actor & critic).", flush=True)
+        print(f"[PPO Update] Batch size: {self.timesteps_per_batch} timesteps (no minibatching).", flush=True)
+        print("="*80, flush=True)
         t_so_far = 0  # Timesteps simulated so far
         i_so_far = 0  # Iterations ran so far
         value_func = []
         while t_so_far < total_timesteps:  # ALG STEP 2
+            # Timing: iteration start
+            t_iter_start = time.time()
+            
             # Autobots, roll out (just kidding, we're collecting our batch simulations here)
-            batch_obs, batch_acts, batch_log_probs, batch_rtgs, batch_lens, iter_metrics = self.rollout(past_action=past_action,
-                                                                                          t_so_far=t_so_far)  # ALG STEP 3
+            t_rollout_start = time.time()
+            batch_obs, batch_acts, batch_log_probs, batch_rtgs, batch_lens, iter_metrics, batch_vision_feats = self.rollout(past_action=past_action, t_so_far=t_so_far)  # ALG STEP 3
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            t_rollout_end = time.time()
+            rollout_time = t_rollout_end - t_rollout_start
 
             # Calculate how many timesteps we collected this batch
             t_so_far += np.sum(batch_lens)
+            
+            # Check if we've reached or exceeded the target
+            if t_so_far >= total_timesteps:
+                print(f"[Training] Reached {t_so_far} timesteps (target: {total_timesteps}). Stopping training.", flush=True)
+                # Still log this iteration before stopping
+                pass  # Continue to logging below, then break at end
 
             # Increment the number of iterations
             i_so_far += 1
@@ -160,7 +257,7 @@ class PPO:
             self.logger['iter_metrics'] = iter_metrics
 
             # Calculate advantage at k-th iteration
-            self.V, _ = self.evaluate(batch_obs, batch_acts)
+            self.V, _ = self.evaluate(batch_obs, batch_acts, batch_vision_feats)
             value_func.append(self.V.detach().mean())
             A_k = batch_rtgs - self.V.detach()  # ALG STEP 5
             f = open(os.path.join(self.log_dir_path, 'V_fun.txt'), 'a+')
@@ -168,16 +265,18 @@ class PPO:
                 f.write(str(i))
                 f.write('\n')
             f.close()
-            # One of the only tricks I use that isn't in the pseudocode. Normalizing advantages
-            # isn't theoretically necessary, but in practice it decreases the variance of
-            # our advantages and makes convergence much more stable and faster. I added this because
-            # solving some environments was too unstable without it.
+            # Normalizing advantages for stability
             A_k = (A_k - A_k.mean()) / (A_k.std() + 1e-10)
 
-            # This is the loop where we update our network for some n epochs
+            # Timing: PPO update start
+            t_update_start = time.time()
+            actor_grad_steps = 0
+            critic_grad_steps = 0
+            
+            # Update network for n epochs
             for _ in range(self.n_updates_per_iteration):  # ALG STEP 6 & 7
                 # Calculate V_phi and pi_theta(a_t | s_t)
-                self.V, curr_log_probs = self.evaluate(batch_obs, batch_acts)
+                self.V, curr_log_probs = self.evaluate(batch_obs, batch_acts, batch_vision_feats)
 
                 # Calculate the ratio pi_theta(a_t | s_t) / pi_theta_k(a_t | s_t)
                 # NOTE: we just subtract the logs, which is the same as
@@ -205,53 +304,73 @@ class PPO:
                 self.actor_optim.zero_grad()
                 actor_loss.backward(retain_graph=True)
                 self.actor_optim.step()
+                actor_grad_steps += 1
 
                 # Calculate gradients and perform backward propagation for critic network
                 self.critic_optim.zero_grad()
                 critic_loss.backward()
                 self.critic_optim.step()
+                critic_grad_steps += 1
 
                 # Log actor loss
                 self.logger['actor_losses'].append(actor_loss.detach())
                 self.logger['critic_losses'].append(critic_loss.detach())
 
+            # Timing: PPO update end
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            t_update_end = time.time()
+            update_time = t_update_end - t_update_start
+            
+            # Timing: iteration end
+            t_iter_end = time.time()
+            iter_time = t_iter_end - t_iter_start
+            
+            # Store timing info in logger
+            self.logger['rollout_time'] = rollout_time
+            self.logger['update_time'] = update_time
+            self.logger['iter_time'] = iter_time
+            self.logger['actor_grad_steps'] = actor_grad_steps
+            self.logger['critic_grad_steps'] = critic_grad_steps
+            
             # Print a summary of our training so far
             self._log_summary()
             # Save our model if it's time
 
             if i_so_far % self.save_freq == 0:
-                epoch = i_so_far // self.save_freq
-                actor_path = os.path.join(self.checkpoint_dir, f'actor_step{t_so_far:08d}.pth')
-                critic_path = os.path.join(self.checkpoint_dir, f'critic_step{t_so_far:08d}.pth')
+                actor_path = os.path.join(self.checkpoint_dir, f'actor_iter{i_so_far:04d}_step{t_so_far:08d}.pth')
+                critic_path = os.path.join(self.checkpoint_dir, f'critic_iter{i_so_far:04d}_step{t_so_far:08d}.pth')
                 torch.save(self.actor.state_dict(), actor_path)
                 torch.save(self.critic.state_dict(), critic_path)
-                print(f"[PPO] Saved checkpoint at step {t_so_far}: {actor_path}", flush=True)
+                print(f"[PPO] Saved checkpoint at iteration {i_so_far}, step {t_so_far}: {actor_path}", flush=True)
+            
+            # Check if we should stop after this iteration
+            if t_so_far >= total_timesteps:
+                break
 
     def rollout(self, past_action, t_so_far):
         """
-			Too many transformers references, I'm sorry. This is where we collect the batch of data
-			from simulation. Since this is an on-policy algorithm, we'll need to collect a fresh batch
-			of data each time we iterate the actor/critic networks.
-
-			Parameters:
-				None
+			Collect batch of data from simulation.
+			For vision mode: extract 1280-d features ONCE per step and cache them.
 
 			Return:
-				batch_obs - the observations collected this batch. Shape: (number of timesteps, dimension of observation)
-				batch_acts - the actions collected this batch. Shape: (number of timesteps, dimension of action)
-				batch_log_probs - the log probabilities of each action taken this batch. Shape: (number of timesteps)
-				batch_rtgs - the Rewards-To-Go of each timestep in this batch. Shape: (number of timesteps)
-				batch_lens - the lengths of each episode this batch. Shape: (number of episodes)
+				batch_obs - base state observations (LiDAR + pose + past). Shape: (timesteps, obs_dim)
+				batch_acts - actions collected. Shape: (timesteps, action_dim)
+				batch_log_probs - log probabilities. Shape: (timesteps,)
+				batch_rtgs - Rewards-To-Go. Shape: (timesteps,)
+				batch_lens - episode lengths. Shape: (num_episodes,)
+				batch_vision_feats - vision features (1280-d). Shape: (timesteps, 1280) or None
 		"""
-        # Batch data. For more details, check function header.
+        # Batch data
         batch_obs = []
         batch_acts = []
         batch_log_probs = []
         batch_rews = []
         batch_rtgs = []
         batch_lens = []
+        batch_vision_feats = [] if self.use_vision else None
 
-        # Reset the environment. sNote that obs is short for observation.
+        # Reset environment
         obs = self.env.reset()
         done = False
         episode_reward = 0
@@ -263,34 +382,44 @@ class PPO:
         prev_pos = None
         ep_start_time = time.time()
         
-        # Iteration-level metrics (for summary)
+        # Iteration-level metrics
         iter_successes = 0
         iter_collisions = 0
         iter_timeouts = 0
         iter_ep_times = []
         iter_ep_count = 0
         
-        # while t < self.timesteps_per_batch:
+        # Rollout loop
         for t in range(self.timesteps_per_batch):
 
-            # Track observations in this batch
+            # Track base state observation
             batch_obs.append(obs)
-            # Calculate action and make a step in the env.
-            # Note that rew is short for reward.
-            action, log_prob = self.get_action(obs, t_so_far, one_round)
             
-            # Get position before step for path length calculation
+            # Extract vision features ONCE (frozen backbone, no grad)
+            if self.use_vision:
+                img = self.env.getLatestImage()
+                if img is not None:
+                    vision_feat = self.vision_backbone.encode_image(img)  # (1280,)
+                else:
+                    vision_feat = np.zeros(1280, dtype=np.float32)
+                batch_vision_feats.append(vision_feat)
+            else:
+                vision_feat = None
+            
+            # Get action from policy
+            action, log_prob = self.get_action(obs, t_so_far, one_round, vision_feat=vision_feat)
+            
+            # Get position for path length calculation
             curr_pos = np.array([self.env.position.x, self.env.position.y])
             if prev_pos is not None:
                 ep_path_length += np.linalg.norm(curr_pos - prev_pos)
             prev_pos = curr_pos
             
-            # old state as input because of reward function
+            # Step environment
             obs, rew, done, arrive = self.env.step(action, past_action)
 
             past_action = action
             episode_reward += rew
-            # Track recent reward, action, and action log probability
             ep_rews.append(rew)
             batch_acts.append(action)
             batch_log_probs.append(log_prob)
@@ -361,15 +490,19 @@ class PPO:
         f.close()
         episode_rewards = []
 
-        # Reshape data as tensors in the shape specified in function description, before returning
+        # Reshape data as tensors
         batch_obs = torch.tensor(batch_obs, dtype=torch.float)
         batch_acts = torch.tensor(batch_acts, dtype=torch.float)
         batch_log_probs = torch.tensor(batch_log_probs, dtype=torch.float)
         batch_rtgs = self.compute_rtgs(batch_rews)
+        
+        # Convert vision features to tensor if using vision
+        if self.use_vision:
+            batch_vision_feats = torch.tensor(np.array(batch_vision_feats), dtype=torch.float)
+        else:
+            batch_vision_feats = None
 
-        # ALG STEP 4
-
-        # Log the episodic returns and episodic lengths in this batch.
+        # Log episodic returns and lengths
         self.logger['batch_rews'] = batch_rews
         self.logger['batch_lens'] = batch_lens
         
@@ -382,8 +515,8 @@ class PPO:
             'ep_count': iter_ep_count
         }
 
-        return batch_obs.to(device), batch_acts.to(device), batch_log_probs.to(device), batch_rtgs.to(
-            device), batch_lens, iter_metrics
+        return batch_obs.to(device), batch_acts.to(device), batch_log_probs.to(device), batch_rtgs.to(device), \
+               batch_lens, iter_metrics, batch_vision_feats.to(device) if batch_vision_feats is not None else None
 
     def compute_rtgs(self, batch_rews):
         """
@@ -415,12 +548,13 @@ class PPO:
 
         return batch_rtgs
 
-    def get_action(self, obs, t_so_far, one_round):
+    def get_action(self, obs, t_so_far, one_round, vision_feat=None):
         """
 			Queries an action from the actor network, should be called from rollout.
 
 			Parameters:
-				obs - the observation at the current timestep
+				obs - the base state observation at the current timestep
+				vision_feat - the vision features (1280-d) for this timestep (optional)
 
 			Return:
 				action - the action to take, as a numpy array
@@ -428,53 +562,50 @@ class PPO:
 		"""
         self.t_step = one_round
         # Query the actor network for a mean action
-        mean = self.actor(obs)
+        if self.use_vision and vision_feat is not None:
+            vision_feat_tensor = torch.tensor(vision_feat, dtype=torch.float).unsqueeze(0).to(device)
+            mean = self.actor(obs, vision_feat=vision_feat_tensor)
+        else:
+            mean = self.actor(obs)
 
-        # Create a distribution with the mean action and std from the covariance matrix above.
-        # For more information on how this distribution works, check out Andrew Ng's lecture on it:
-        # https://www.youtube.com/watch?v=JjB58InuTqM
+        # Create distribution and sample action
         if self.t_step == 0 and t_so_far > 50000 and self.cov_mat[0][0] >= 0.1:
             self.cov_mat *= 0.995
         dist = MultivariateNormal(mean, self.cov_mat)
 
-        # Sample an action from the distribution
         action = dist.sample()
-        action[0] = torch.clip(action[0], 0, 1)
-        action[1] = torch.clip(action[1], -1, 1)
-        # Calculate the log probability for that action
+        action[:, 0] = torch.clip(action[:, 0], 0, 1)
+        action[:, 1] = torch.clip(action[:, 1], -1, 1)
         log_prob = dist.log_prob(action)
 
-        # Return the sampled action and the log probability of that action in our distribution
-        return action.detach().cpu().numpy(), log_prob.detach()
+        return action.detach().cpu().numpy()[0], log_prob.detach()[0]
 
-    def evaluate(self, batch_obs, batch_acts):
+    def evaluate(self, batch_obs, batch_acts, batch_vision_feats=None):
         """
 			Estimate the values of each observation, and the log probs of
 			each action in the most recent batch with the most recent
 			iteration of the actor network. Should be called from learn.
 
 			Parameters:
-				batch_obs - the observations from the most recently collected batch as a tensor.
-							Shape: (number of timesteps in batch, dimension of observation)
-				batch_acts - the actions from the most recently collected batch as a tensor.
-							Shape: (number of timesteps in batch, dimension of action)
+				batch_obs - the base state observations from batch. Shape: (timesteps, obs_dim)
+				batch_acts - the actions from batch. Shape: (timesteps, action_dim)
+				batch_vision_feats - the vision features (1280-d) from batch. Shape: (timesteps, 1280) or None
 
 			Return:
 				V - the predicted values of batch_obs
 				log_probs - the log probabilities of the actions taken in batch_acts given batch_obs
 		"""
-        # Query critic network for a value V for each batch_obs. Shape of V should be same as batch_rtgs
-        self.V = self.critic(batch_obs).squeeze()
+        # Query critic network for values V (always pass vision_feat when use_vision=True)
+        self.V = self.critic(batch_obs, vision_feat=batch_vision_feats).squeeze()
 
-        # Calculate the log probabilities of batch actions using most recent actor network.
-        # This segment of code is similar to that in get_action()
-        mean = self.actor(batch_obs)
-        mean[0] = torch.clip(mean[0], 0, 1).detach()
-        mean[1] = torch.clip(mean[1], -1, 1).detach()
+        # Calculate log probabilities using most recent actor network
+        mean = self.actor(batch_obs, vision_feat=batch_vision_feats)
+            
+        mean[:, 0] = torch.clip(mean[:, 0], 0, 1).detach()
+        mean[:, 1] = torch.clip(mean[:, 1], -1, 1).detach()
         dist = MultivariateNormal(mean, self.cov_mat)
         log_probs = dist.log_prob(batch_acts)
-        # Return the value vector V of each observation in the batch
-        # and log probabilities log_probs of each action in the batch
+        
         return self.V, log_probs
 
     def _log_episode_metrics(self, episode_num, timestep, success, collision, timeout, length, ep_return, path_length, ep_time):
@@ -485,6 +616,10 @@ class PPO:
         with open(self.episode_csv_path, 'a', newline='') as f:
             writer = csv.writer(f)
             writer.writerow([episode_num, timestep, success, collision, timeout, length, ep_return, path_length, ep_time])
+        
+        # Print per-episode summary to console
+        outcome = "SUCCESS" if success else ("COLLISION" if collision else ("TIMEOUT" if timeout else "UNKNOWN"))
+        print(f"[Ep {episode_num:4d}] {outcome:9s} | Steps: {length:3d} | Return: {ep_return:7.1f} | Time: {ep_time:5.1f}s | Total timesteps: {timestep}", flush=True)
 
     def _init_hyperparameters(self, hyperparameters):
         """
@@ -582,23 +717,54 @@ class PPO:
             mean_ep_time = np.mean(ep_times) if ep_times else 0.0
         else:
             success_rate = collision_rate = timeout_rate = mean_ep_time = 0.0
+        
+        # Extract timing metrics
+        rollout_time = self.logger.get('rollout_time', 0.0)
+        update_time = self.logger.get('update_time', 0.0)
+        iter_time = self.logger.get('iter_time', 0.0)
+        actor_grad_steps = self.logger.get('actor_grad_steps', 0)
+        critic_grad_steps = self.logger.get('critic_grad_steps', 0)
+        steps_per_sec = self.timesteps_per_batch / iter_time if iter_time > 0 else 0.0
 
         # Print logging statements
         print(flush=True)
-        print(f"-------------------- Iteration #{i_so_far} --------------------", flush=True)
+        print(f"================================================================================", flush=True)
+        print(f"Iteration: {i_so_far}", flush=True)
+        print(f"================================================================================", flush=True)
         print(f"Episodes in Iteration: {ep_count}", flush=True)
         print(f"Success Rate: {success_rate:.1f}%", flush=True)
         print(f"Collision Rate: {collision_rate:.1f}%", flush=True)
         print(f"Timeout Rate: {timeout_rate:.1f}%", flush=True)
-        print(f"Mean Episode Time: {mean_ep_time:.2f}s", flush=True)
-        print(f"Mean Episode Length: {avg_ep_lens:.1f}", flush=True)
-        print(f"Mean Episode Return: {avg_ep_rews:.2f}", flush=True)
-        print(f"Average Actor Loss: {avg_actor_loss:.4f}", flush=True)
-        print(f"Average Critic Loss: {avg_critic_loss:.4f}", flush=True)
+        print(f"Mean Episode Reward: {avg_ep_rews:.2f}", flush=True)
+        print(f"Mean Episode Length: {avg_ep_lens:.2f}", flush=True)
+        print(f"Mean Episode Time: {mean_ep_time:.2f} seconds", flush=True)
+        print(f"Actor Loss: {avg_actor_loss:.4f}", flush=True)
+        print(f"Critic Loss: {avg_critic_loss:.4f}", flush=True)
         print(f"Timesteps So Far: {t_so_far}", flush=True)
-        print(f"Iteration took: {delta_t} secs", flush=True)
-        print(f"------------------------------------------------------", flush=True)
+        print(f"---", flush=True)
+        print(f"Rollout Time: {rollout_time:.2f}s | Update Time: {update_time:.2f}s | Iteration Time: {iter_time:.2f}s", flush=True)
+        print(f"Steps/sec: {steps_per_sec:.1f} | Actor Grad Steps: {actor_grad_steps} | Critic Grad Steps: {critic_grad_steps}", flush=True)
+        print(f"================================================================================", flush=True)
         print(flush=True)
+        
+        # Log key metrics to TensorBoard
+        self.writer.add_scalar("train/success_rate", success_rate, i_so_far)
+        self.writer.add_scalar("train/collision_rate", collision_rate, i_so_far)
+        self.writer.add_scalar("train/timeout_rate", timeout_rate, i_so_far)
+        self.writer.add_scalar("train/mean_return", avg_ep_rews, i_so_far)
+        self.writer.add_scalar("train/mean_ep_length", avg_ep_lens, i_so_far)
+        self.writer.add_scalar("train/mean_ep_time", mean_ep_time, i_so_far)
+        self.writer.add_scalar("loss/actor", avg_actor_loss, i_so_far)
+        self.writer.add_scalar("loss/critic", avg_critic_loss, i_so_far)
+        self.writer.add_scalar("train/timesteps", t_so_far, i_so_far)
+        
+        # Log timing/performance metrics to TensorBoard
+        self.writer.add_scalar("time/rollout", rollout_time, i_so_far)
+        self.writer.add_scalar("time/update", update_time, i_so_far)
+        self.writer.add_scalar("time/iteration", iter_time, i_so_far)
+        self.writer.add_scalar("perf/steps_per_sec", steps_per_sec, i_so_far)
+        self.writer.add_scalar("perf/actor_grad_steps", actor_grad_steps, i_so_far)
+        self.writer.add_scalar("perf/critic_grad_steps", critic_grad_steps, i_so_far)
 
         ## take all logging data
 

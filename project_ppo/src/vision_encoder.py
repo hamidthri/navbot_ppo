@@ -33,7 +33,7 @@ class VisionEncoder(nn.Module):
         # Extract feature extractor (remove classifier)
         self.features = mobilenet.features
         
-        # Freeze backbone
+        # Freeze backbone completely
         for param in self.features.parameters():
             param.requires_grad = False
         
@@ -46,6 +46,9 @@ class VisionEncoder(nn.Module):
             nn.LayerNorm(output_dim)  # Normalize for stable scale
         )
         
+        # KEEP projection head TRAINABLE for faster learning
+        # (Backbone frozen, projection trainable)
+        
         # ImageNet normalization
         self.transform = transforms.Compose([
             transforms.ToPILImage(),
@@ -55,8 +58,24 @@ class VisionEncoder(nn.Module):
                                std=[0.229, 0.224, 0.225])
         ])
         
-        self.eval()  # Set to eval mode (frozen)
+        self.train()  # Set to train mode (projection head trainable)
+        
+        # Verify encoder status: backbone frozen, projection trainable
+        backbone_params = sum(p.numel() for p in self.features.parameters())
+        backbone_trainable = sum(p.numel() for p in self.features.parameters() if p.requires_grad)
+        projection_params = sum(p.numel() for p in self.projection.parameters())
+        projection_trainable = sum(p.numel() for p in self.projection.parameters() if p.requires_grad)
+        total_params = sum(p.numel() for p in self.parameters())
+        trainable_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
+        
         print(f"[VisionEncoder] Initialized with output_dim={output_dim}", flush=True)
+        print(f"[VisionEncoder] Backbone: {backbone_params:,} params, {backbone_trainable:,} trainable (FROZEN)", flush=True)
+        print(f"[VisionEncoder] Projection: {projection_params:,} params, {projection_trainable:,} trainable (TRAINABLE)", flush=True)
+        print(f"[VisionEncoder] Total: {total_params:,} params, {trainable_params:,} trainable", flush=True)
+        
+        assert backbone_trainable == 0, f"ERROR: Backbone should be frozen but has {backbone_trainable} trainable params!"
+        assert projection_trainable > 0, f"ERROR: Projection head should be trainable but has 0 trainable params!"
+        print(f"[VisionEncoder] ✓ Configuration verified: Backbone FROZEN, Projection TRAINABLE", flush=True)
     
     def preprocess_image(self, image_msg_or_array):
         """
@@ -105,9 +124,11 @@ class VisionEncoder(nn.Module):
         Returns:
             torch.Tensor of shape (B, output_dim)
         """
+        # Backbone always frozen, projection head may be trainable
         with torch.no_grad():
             x = self.features(image_tensor)
-            x = self.projection(x)
+        # Projection head: compute with grad when training, no grad when eval
+        x = self.projection(x)
         return x
     
     def encode_image(self, image_msg_or_array, device='cpu'):

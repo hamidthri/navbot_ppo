@@ -49,14 +49,17 @@ def train(env, hyperparameters, actor_model, critic_model, max_timesteps=5000):
     past_action = np.array([0., 0.])
 
     # Tries to load in an existing actor/critic model to continue training on
-    checkpoint_pattern = os.path.join(agent.checkpoint_dir, 'critic_step*.pth')
+    checkpoint_pattern = os.path.join(agent.checkpoint_dir, 'critic_iter*_step*.pth')
     critic_paths = sorted(glob.glob(checkpoint_pattern))
-    actor_pattern = os.path.join(agent.checkpoint_dir, 'actor_step*.pth')
+    actor_pattern = os.path.join(agent.checkpoint_dir, 'actor_iter*_step*.pth')
     actor_paths = sorted(glob.glob(actor_pattern))
     
-    # Only load if state_dim matches (check if we have vision features)
+    # Check if resume is requested
+    resume = hyperparameters.get('resume', False)
+    
+    # Only load if resume=True and state_dim matches
     load_checkpoint = False
-    if critic_paths != [] and actor_paths != []:
+    if resume and critic_paths != [] and actor_paths != []:
         # Try to load and check dimensions
         try:
             checkpoint = torch.load(actor_paths[-1])
@@ -69,13 +72,15 @@ def train(env, hyperparameters, actor_model, critic_model, max_timesteps=5000):
                         checkpoint_input_dim = checkpoint[key].shape[1]
                         if checkpoint_input_dim == actual_state_dim:
                             load_checkpoint = True
-                            print(f"Checkpoint state_dim matches ({checkpoint_input_dim}), will load", flush=True)
+                            print(f"[Resume Mode] Checkpoint state_dim matches ({checkpoint_input_dim}), will load", flush=True)
                         else:
-                            print(f"Checkpoint state_dim mismatch: checkpoint={checkpoint_input_dim}, current={actual_state_dim}", flush=True)
+                            print(f"[Resume Mode] Checkpoint state_dim mismatch: checkpoint={checkpoint_input_dim}, current={actual_state_dim}", flush=True)
                             print(f"Training from scratch with new state_dim", flush=True)
                         break
         except Exception as e:
             print(f"Could not check checkpoint dimensions: {e}", flush=True)
+    elif not resume and (critic_paths != [] or actor_paths != []):
+        print(f"[Fresh Training] Existing checkpoints found but --resume not specified. Training from scratch.", flush=True)
     
     if load_checkpoint:
         print(f"Loading in {actor_paths[-1]} and {critic_paths[-1]}...", flush=True)
@@ -147,9 +152,12 @@ def evaluate(env, hyperparameters, actor_model, critic_model, num_episodes):
     
     # Load model
     if actor_model == '':
-        # Try to find latest checkpoint in new structure
+        # Try to find latest checkpoint in new structure (support both old and new naming)
         ckpt_dir = os.path.join(output_dir, method_name, 'checkpoints')
-        actor_path = sorted(glob.glob(os.path.join(ckpt_dir, f'actor_step*.pth')))
+        actor_path = sorted(glob.glob(os.path.join(ckpt_dir, f'actor_iter*_step*.pth')))
+        if not actor_path:
+            # Fallback to old naming
+            actor_path = sorted(glob.glob(os.path.join(ckpt_dir, f'actor_step*.pth')))
         if not actor_path:
             print("No checkpoint found for evaluation. Exiting.", flush=True)
             sys.exit(0)
@@ -433,9 +441,12 @@ def main(args):
     
     env = Env(is_training, use_vision=use_vision, vision_dim=vision_dim)
     
-    # Calculate actual state dimension
-    actual_state_dim = state_dim + (vision_dim if use_vision else 0)
-    print(f'State Dimensions: {actual_state_dim} (base={state_dim}, vision={vision_dim if use_vision else 0})', flush=True)
+    # State dimension is ONLY base state (LiDAR + pose + past actions)
+    # Vision features are handled separately in policy network
+    actual_state_dim = state_dim  # Always 16 for base state
+    print(f'[main] Base State Dimensions: {actual_state_dim}', flush=True)
+    if use_vision:
+        print(f'[main] Vision mode enabled: features extracted in policy network (not concatenated to state)', flush=True)
     # agent = DDPG(env, state_dim, action_dim)
 
 
@@ -454,7 +465,7 @@ def main(args):
     # ArgumentParser because it's too annoying to type them every time at command line. Instead, you can change them here.
     # To see a list of hyperparameters, look in ppo.py at function _init_hyperparameters
     hyperparameters = {
-        'timesteps_per_batch': args.timesteps_per_episode,
+        'timesteps_per_batch': args.steps_per_iteration,
         'max_timesteps_per_episode': args.timesteps_per_episode,
         'gamma': 0.99,
         'n_updates_per_iteration': 50,
@@ -462,10 +473,12 @@ def main(args):
         'clip': 0.2,
         'render': True,
         'render_every_i': 10,
+        'save_freq': args.save_every_iterations,
         'exp_id': "v02_simple_env_60_reward_proportion",
         'method_name': args.method_name,
         'state_dim': actual_state_dim,
-        'output_dir': args.output_dir
+        'output_dir': args.output_dir,
+        'resume': args.resume
     }
 
     # Creates the environment we'll be running. If you want to replace with your own
