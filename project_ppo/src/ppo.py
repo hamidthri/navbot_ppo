@@ -125,7 +125,7 @@ class PPO:
         import csv
         with open(self.episode_csv_path, 'w', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(['episode', 'timestep', 'success', 'collision', 'timeout', 'length', 'return', 'path_length'])
+            writer.writerow(['episode', 'timestep', 'success', 'collision', 'timeout', 'length', 'return', 'path_length', 'time'])
         self.episode_count = 0
 
     def learn(self, total_timesteps, past_action):
@@ -145,12 +145,11 @@ class PPO:
         value_func = []
         while t_so_far < total_timesteps:  # ALG STEP 2
             # Autobots, roll out (just kidding, we're collecting our batch simulations here)
-            batch_obs, batch_acts, batch_log_probs, batch_rtgs, batch_lens = self.rollout(past_action=past_action,
+            batch_obs, batch_acts, batch_log_probs, batch_rtgs, batch_lens, iter_metrics = self.rollout(past_action=past_action,
                                                                                           t_so_far=t_so_far)  # ALG STEP 3
 
             # Calculate how many timesteps we collected this batch
             t_so_far += np.sum(batch_lens)
-            print(f"[DEBUG] Batch collected: t_so_far={t_so_far}, batch_lens_sum={np.sum(batch_lens)}", flush=True)
 
             # Increment the number of iterations
             i_so_far += 1
@@ -158,6 +157,7 @@ class PPO:
             # Logging timesteps so far and iterations so far
             self.logger['t_so_far'] = t_so_far
             self.logger['i_so_far'] = i_so_far
+            self.logger['iter_metrics'] = iter_metrics
 
             # Calculate advantage at k-th iteration
             self.V, _ = self.evaluate(batch_obs, batch_acts)
@@ -243,7 +243,6 @@ class PPO:
 				batch_rtgs - the Rewards-To-Go of each timestep in this batch. Shape: (number of timesteps)
 				batch_lens - the lengths of each episode this batch. Shape: (number of episodes)
 		"""
-        print(f"[DEBUG] Starting rollout: collecting {self.timesteps_per_batch} timesteps...", flush=True)
         # Batch data. For more details, check function header.
         batch_obs = []
         batch_acts = []
@@ -262,6 +261,14 @@ class PPO:
         # Episode metrics tracking
         ep_path_length = 0.0
         prev_pos = None
+        ep_start_time = time.time()
+        
+        # Iteration-level metrics (for summary)
+        iter_successes = 0
+        iter_collisions = 0
+        iter_timeouts = 0
+        iter_ep_times = []
+        iter_ep_count = 0
         
         # while t < self.timesteps_per_batch:
         for t in range(self.timesteps_per_batch):
@@ -293,6 +300,9 @@ class PPO:
             # Check termination: collision, arrival, or timeout
             timeout = (one_round >= self.max_timesteps_per_episode)
             if done or arrive or timeout:
+                # Compute episode time
+                ep_time = time.time() - ep_start_time
+                
                 # Log episode metrics
                 success = 1 if arrive else 0
                 collision = 1 if (done and not arrive) else 0
@@ -306,17 +316,22 @@ class PPO:
                     timeout=timeout_flag,
                     length=one_round,
                     ep_return=episode_reward,
-                    path_length=ep_path_length
+                    path_length=ep_path_length,
+                    ep_time=ep_time
                 )
                 self.episode_count += 1
+                
+                # Track iteration metrics
+                iter_successes += success
+                iter_collisions += collision
+                iter_timeouts += timeout_flag
+                iter_ep_times.append(ep_time)
+                iter_ep_count += 1
                 
                 batch_lens.append(one_round)
                 batch_rews.append(ep_rews)
                 ep_rews = []
                 if one_round != 0:
-                    result = 'Success' if arrive else ('Collision' if done else 'Timeout')
-                    print('Step: %3i' % one_round, '| avg_reward:{:.2f}'.format(episode_reward / one_round),
-                          '| Time step: %i' % (t_so_far + np.sum(batch_lens)), '|', result)
                     self.logger['Episode_Rewards'].append(episode_reward / one_round)
                 episode_reward = 0
                 one_round = 0
@@ -325,6 +340,7 @@ class PPO:
                 past_action = [0, 0]
                 done = False
                 obs = self.env.reset()
+                ep_start_time = time.time()
             # Run an episode for a maximum of max_timesteps_per_episode timesteps
             # If render is specified, render the environment
             # if self.render and (self.logger['i_so_far'] % self.render_every_i == 0) and len(batch_lens) == 0:
@@ -356,9 +372,18 @@ class PPO:
         # Log the episodic returns and episodic lengths in this batch.
         self.logger['batch_rews'] = batch_rews
         self.logger['batch_lens'] = batch_lens
+        
+        # Create iteration metrics dictionary
+        iter_metrics = {
+            'successes': iter_successes,
+            'collisions': iter_collisions,
+            'timeouts': iter_timeouts,
+            'ep_times': iter_ep_times,
+            'ep_count': iter_ep_count
+        }
 
         return batch_obs.to(device), batch_acts.to(device), batch_log_probs.to(device), batch_rtgs.to(
-            device), batch_lens
+            device), batch_lens, iter_metrics
 
     def compute_rtgs(self, batch_rews):
         """
@@ -452,14 +477,14 @@ class PPO:
         # and log probabilities log_probs of each action in the batch
         return self.V, log_probs
 
-    def _log_episode_metrics(self, episode_num, timestep, success, collision, timeout, length, ep_return, path_length):
+    def _log_episode_metrics(self, episode_num, timestep, success, collision, timeout, length, ep_return, path_length, ep_time):
         """
             Log per-episode metrics to CSV file.
         """
         import csv
         with open(self.episode_csv_path, 'a', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow([episode_num, timestep, success, collision, timeout, length, ep_return, path_length])
+            writer.writerow([episode_num, timestep, success, collision, timeout, length, ep_return, path_length, ep_time])
 
     def _init_hyperparameters(self, hyperparameters):
         """
@@ -545,14 +570,31 @@ class PPO:
         avg_ep_rews = np.mean([np.sum(ep_rews) for ep_rews in self.logger['batch_rews']])
         avg_actor_loss = np.mean([losses.detach().cpu().mean() for losses in self.logger['actor_losses']])
         avg_critic_loss = np.mean([losses.detach().cpu().mean() for losses in self.logger['critic_losses']])
+        
+        # Extract iteration metrics
+        iter_metrics = self.logger.get('iter_metrics', {})
+        ep_count = iter_metrics.get('ep_count', 0)
+        if ep_count > 0:
+            success_rate = (iter_metrics.get('successes', 0) / ep_count) * 100
+            collision_rate = (iter_metrics.get('collisions', 0) / ep_count) * 100
+            timeout_rate = (iter_metrics.get('timeouts', 0) / ep_count) * 100
+            ep_times = iter_metrics.get('ep_times', [])
+            mean_ep_time = np.mean(ep_times) if ep_times else 0.0
+        else:
+            success_rate = collision_rate = timeout_rate = mean_ep_time = 0.0
 
         # Print logging statements
         print(flush=True)
         print(f"-------------------- Iteration #{i_so_far} --------------------", flush=True)
-        print(f"Average Episodic Length: {avg_ep_lens}", flush=True)
-        print(f"Average Episodic Return: {avg_ep_rews}", flush=True)
-        print(f"Average Actor Loss: {avg_actor_loss}", flush=True)
-        print(f"Average Critic Loss: {avg_critic_loss}", flush=True)
+        print(f"Episodes in Iteration: {ep_count}", flush=True)
+        print(f"Success Rate: {success_rate:.1f}%", flush=True)
+        print(f"Collision Rate: {collision_rate:.1f}%", flush=True)
+        print(f"Timeout Rate: {timeout_rate:.1f}%", flush=True)
+        print(f"Mean Episode Time: {mean_ep_time:.2f}s", flush=True)
+        print(f"Mean Episode Length: {avg_ep_lens:.1f}", flush=True)
+        print(f"Mean Episode Return: {avg_ep_rews:.2f}", flush=True)
+        print(f"Average Actor Loss: {avg_actor_loss:.4f}", flush=True)
+        print(f"Average Critic Loss: {avg_critic_loss:.4f}", flush=True)
         print(f"Timesteps So Far: {t_so_far}", flush=True)
         print(f"Iteration took: {delta_t} secs", flush=True)
         print(f"------------------------------------------------------", flush=True)

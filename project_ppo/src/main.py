@@ -10,10 +10,8 @@ from ppo import PPO
 from net_actor import NetActor
 from net_critic import NetCritic
 from eval_policy import eval_policy
-import rospy
 import numpy as np
 
-from environment_new import Env
 import os, glob
 
 
@@ -136,39 +134,47 @@ def evaluate(env, hyperparameters, actor_model, critic_model, num_episodes):
     import csv
     import time as time_module
     
-    print(f"Evaluation Mode: Running {num_episodes} episodes", flush=True)
+    print(f"\nEvaluation: Running {num_episodes} episodes", flush=True)
     
     method_name = hyperparameters.get('method_name', 'baseline')
     exp_id = hyperparameters['exp_id']
     actual_state_dim = hyperparameters.pop('state_dim', state_dim)
     
+    # Get output directory from args
+    import arguments
+    default_output = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', 'runs')
+    output_dir = hyperparameters.get('output_dir', default_output)
+    
     # Load model
     if actor_model == '':
-        # Try to find latest checkpoint
-        actor_path = sorted(glob.glob(f'../../../models/{exp_id}/ppo_actor_{method_name}_*.pth'))
+        # Try to find latest checkpoint in new structure
+        ckpt_dir = os.path.join(output_dir, method_name, 'checkpoints')
+        actor_path = sorted(glob.glob(os.path.join(ckpt_dir, f'actor_step*.pth')))
         if not actor_path:
             print("No checkpoint found for evaluation. Exiting.", flush=True)
             sys.exit(0)
         actor_model = actor_path[-1]
     
-    print(f"Loading actor model: {actor_model}", flush=True)
+    print(f"Loading actor: {actor_model}", flush=True)
     
     policy = NetActor(actual_state_dim, action_dim).to(device)
     policy.load_state_dict(torch.load(actor_model))
     policy.eval()
     
-    # Prepare CSV
-    eval_csv_path = f'../../../record/{method_name}_eval_episodes.csv'
-    os.makedirs(os.path.dirname(eval_csv_path), exist_ok=True)
+    # Prepare CSV in new structure
+    log_dir = os.path.join(output_dir, method_name, 'logs')
+    os.makedirs(log_dir, exist_ok=True)
+    eval_csv_path = os.path.join(log_dir, f'{method_name}_eval_episodes.csv')
     
     with open(eval_csv_path, 'w', newline='') as f:
         writer = csv.writer(f)
-        writer.writerow(['episode', 'success', 'collision', 'timeout', 'length', 'return', 'path_length'])
+        writer.writerow(['episode', 'success', 'collision', 'timeout', 'length', 'return', 'path_length', 'time'])
     
     # Run episodes
-    metrics = {'success': 0, 'collision': 0, 'timeout': 0, 'lengths': [], 'returns': [], 'path_lengths': []}
+    metrics = {'success': 0, 'collision': 0, 'timeout': 0, 'lengths': [], 'returns': [], 'path_lengths': [], 'times': []}
     
     for ep in range(num_episodes):
+        ep_start_time = time_module.time()
         obs = env.reset()
         done = False
         arrive = False
@@ -198,6 +204,8 @@ def evaluate(env, hyperparameters, actor_model, critic_model, num_episodes):
             if done or arrive:
                 break
         
+        ep_time = time_module.time() - ep_start_time
+        
         # Determine episode outcome
         success = 1 if arrive else 0
         collision = 1 if done and not arrive else 0
@@ -209,11 +217,12 @@ def evaluate(env, hyperparameters, actor_model, critic_model, num_episodes):
         metrics['lengths'].append(ep_length)
         metrics['returns'].append(ep_return)
         metrics['path_lengths'].append(path_length)
+        metrics['times'].append(ep_time)
         
         # Write to CSV
         with open(eval_csv_path, 'a', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow([ep, success, collision, timeout, ep_length, ep_return, path_length])
+            writer.writerow([ep, success, collision, timeout, ep_length, ep_return, path_length, ep_time])
         
         if (ep + 1) % 10 == 0:
             print(f"Evaluated {ep+1}/{num_episodes} episodes", flush=True)
@@ -230,10 +239,11 @@ def evaluate(env, hyperparameters, actor_model, critic_model, num_episodes):
     print(f"Mean Episode Length: {np.mean(metrics['lengths']):.2f} ± {np.std(metrics['lengths']):.2f}", flush=True)
     print(f"Mean Return: {np.mean(metrics['returns']):.2f} ± {np.std(metrics['returns']):.2f}", flush=True)
     print(f"Mean Path Length: {np.mean(metrics['path_lengths']):.2f} ± {np.std(metrics['path_lengths']):.2f}", flush=True)
+    print(f"Mean Episode Time: {np.mean(metrics['times']):.2f}s ± {np.std(metrics['times']):.2f}s", flush=True)
     print(f"Results saved to: {eval_csv_path}", flush=True)
     print("="*60, flush=True)
 
-def makepath(desired_path, isfile = False):
+def makepath(desired_path, isfile=False):
     '''
     if the path does not exist make it
     :param desired_path: can be path to a file or a folder name
@@ -246,8 +256,173 @@ def makepath(desired_path, isfile = False):
         if not os.path.exists(desired_path): os.makedirs(desired_path)
     return desired_path
 
+def dry_run_vision_pipeline(args):
+    """
+    Dry-run mode to test vision pipeline without Gazebo.
+    Tests: image loading -> feature extraction -> state concat -> network forward -> checkpoint save
+    """
+    print("\n" + "="*60)
+    print("[DRY_RUN] Vision Pipeline Test (No Gazebo)")
+    print("="*60 + "\n")
+    
+    use_vision = True
+    vision_dim = 64
+    actual_state_dim = state_dim + vision_dim
+    
+    # Setup output directories
+    from ppo import makepath as ppo_makepath
+    method_run_dir = os.path.join(args.output_dir, args.method_name)
+    checkpoint_dir = os.path.join(method_run_dir, 'checkpoints')
+    log_dir = os.path.join(method_run_dir, 'logs')
+    frame_dir = os.path.join(log_dir, 'dryrun_frames')
+    
+    ppo_makepath(checkpoint_dir)
+    ppo_makepath(log_dir)
+    ppo_makepath(frame_dir)
+    
+    print(f"[DRY_RUN] Output directory: {method_run_dir}")
+    print(f"[DRY_RUN] Checkpoints: {checkpoint_dir}")
+    print(f"[DRY_RUN] Logs: {log_dir}")
+    print(f"[DRY_RUN] Frames: {frame_dir}\n")
+    
+    # Initialize vision encoder
+    print("[DRY_RUN] Loading vision encoder...")
+    from vision_encoder import VisionEncoder
+    vision_encoder = VisionEncoder(output_dim=vision_dim, use_pretrained=True)
+    vision_encoder = vision_encoder.to(device)
+    vision_encoder.eval()
+    print(f"[DRY_RUN] Vision encoder loaded on {device}\n")
+    
+    # Generate or load test images
+    print("[DRY_RUN] Generating test images...")
+    import PIL.Image
+    test_images = []
+    for i in range(5):
+        # Create a simple test pattern (gradient)
+        img_arr = np.zeros((240, 320, 3), dtype=np.uint8)
+        # Create a gradient pattern that varies per frame
+        for y in range(240):
+            for x in range(320):
+                img_arr[y, x, 0] = (x + i * 50) % 256  # Red channel
+                img_arr[y, x, 1] = (y + i * 30) % 256  # Green channel
+                img_arr[y, x, 2] = ((x + y) + i * 20) % 256  # Blue channel
+        
+        img = PIL.Image.fromarray(img_arr, 'RGB')
+        frame_path = os.path.join(frame_dir, f'test_frame_{i:03d}.png')
+        img.save(frame_path)
+        test_images.append(img_arr)
+        print(f"[DRY_RUN] Saved frame {i}: {frame_path}")
+    
+    print()
+    
+    # Extract vision features from test images
+    print("[DRY_RUN] Extracting vision features...")
+    import torchvision.transforms as transforms
+    vision_features_list = []
+    
+    transform = transforms.Compose([
+        transforms.ToPILImage(),
+        transforms.Resize((224, 224)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    ])
+    
+    for i, img_arr in enumerate(test_images):
+        img_tensor = transform(img_arr).unsqueeze(0).to(device)
+        with torch.no_grad():
+            features = vision_encoder(img_tensor)
+        vision_features_list.append(features.cpu().numpy()[0])
+        print(f"[DRY_RUN] Frame {i}: features shape={features.shape}, "
+              f"range=[{features.min():.3f}, {features.max():.3f}], "
+              f"mean={features.mean():.3f}, norm={torch.norm(features).item():.3f}")
+    
+    print()
+    
+    # Create dummy state vectors
+    print("[DRY_RUN] Creating dummy state vectors...")
+    dummy_states = []
+    for i, vision_feats in enumerate(vision_features_list):
+        # LiDAR part: 10 normalized scan values
+        lidar = np.random.uniform(0.1, 1.0, size=10)
+        # Goal info: past_action (2) + rel_dis, yaw, rel_theta, diff_angle (4)
+        past_action = np.array([0.1, 0.05])
+        goal_info = np.array([0.5, 0.3, 0.2, 0.1])  # normalized values
+        
+        # Concatenate: lidar + past_action + goal_info + vision
+        state = np.concatenate([lidar, past_action, goal_info, vision_feats])
+        dummy_states.append(state)
+        print(f"[DRY_RUN] State {i}: shape={state.shape}, "
+              f"lidar={len(lidar)}, past_action={len(past_action)}, "
+              f"goal={len(goal_info)}, vision={len(vision_feats)}, total={len(state)}")
+    
+    print(f"\n[DRY_RUN] Expected state_dim: {actual_state_dim}, Actual: {len(dummy_states[0])}")
+    assert len(dummy_states[0]) == actual_state_dim, f"State dimension mismatch!"
+    print("[DRY_RUN] ✓ State dimensions correct\n")
+    
+    # Initialize networks
+    print("[DRY_RUN] Initializing actor and critic networks...")
+    actor = NetActor(actual_state_dim, action_dim).to(device)
+    critic = NetCritic(actual_state_dim, 1).to(device)
+    print(f"[DRY_RUN] Actor parameters: {sum(p.numel() for p in actor.parameters())}")
+    print(f"[DRY_RUN] Critic parameters: {sum(p.numel() for p in critic.parameters())}\n")
+    
+    # Test forward passes
+    print("[DRY_RUN] Testing forward passes...")
+    for i, state in enumerate(dummy_states):
+        state_tensor = torch.FloatTensor(state).unsqueeze(0).to(device)
+        
+        with torch.no_grad():
+            action_mean = actor(state_tensor)
+            value = critic(state_tensor)
+        
+        print(f"[DRY_RUN] Step {i}: action_mean={action_mean[0].cpu().numpy()}, "
+              f"value={value.item():.3f}")
+    
+    print("[DRY_RUN] ✓ All forward passes successful\n")
+    
+    # Save checkpoints
+    print("[DRY_RUN] Saving checkpoints...")
+    actor_path = os.path.join(checkpoint_dir, f'actor_dryrun.pth')
+    critic_path = os.path.join(checkpoint_dir, f'critic_dryrun.pth')
+    torch.save(actor.state_dict(), actor_path)
+    torch.save(critic.state_dict(), critic_path)
+    print(f"[DRY_RUN] Saved actor: {actor_path}")
+    print(f"[DRY_RUN] Saved critic: {critic_path}\n")
+    
+    # Save CSV log
+    print("[DRY_RUN] Saving dry-run log...")
+    import csv
+    csv_path = os.path.join(log_dir, f'{args.method_name}_dryrun.csv')
+    with open(csv_path, 'w', newline='') as f:
+        writer = csv.writer(f)
+        writer.writerow(['status', 'frames_saved', 'state_dim', 'actor_params', 'critic_params'])
+        writer.writerow(['success', len(test_images), actual_state_dim, 
+                        sum(p.numel() for p in actor.parameters()),
+                        sum(p.numel() for p in critic.parameters())])
+    print(f"[DRY_RUN] Saved log: {csv_path}\n")
+    
+    print("="*60)
+    print("[DRY_RUN] ✓ Vision pipeline test completed successfully!")
+    print("="*60)
+    print(f"\nSummary:")
+    print(f"  - Frames saved: {len(test_images)} in {frame_dir}")
+    print(f"  - State dim: {actual_state_dim} (16 base + 64 vision)")
+    print(f"  - Forward passes: {len(dummy_states)} successful")
+    print(f"  - Checkpoints: {checkpoint_dir}")
+    print(f"  - Log CSV: {csv_path}")
+    print()
+
 def main(args):
+    # Check for dry-run mode BEFORE initializing ROS
+    if args.dry_run_vision:
+        dry_run_vision_pipeline(args)
+        return
+    
+    import rospy
     rospy.init_node('ppo_stage_1')
+    
+    # Import Env after rospy is initialized
+    from environment_new import Env
     
     # Setup vision mode based on method_name
     use_vision = 'vision' in args.method_name.lower()

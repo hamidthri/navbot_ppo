@@ -1,5 +1,10 @@
 #### joe made this: http://goel.io/joe
 
+# Training outputs
+runs/
+record/
+summary/
+
 #####=== Python ===#####
 
 # Byte-compiled / optimized / DLL files

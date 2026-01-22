@@ -14,7 +14,7 @@ from sensor_msgs.msg import LaserScan
 from sensor_msgs.msg import Image
 from nav_msgs.msg import Odometry
 from std_srvs.srv import Empty
-from gazebo_msgs.srv import SpawnModel, DeleteModel
+from gazebo_msgs.srv import SpawnModel, DeleteModel, GetModelState
 from pick_laser import Pick
 # from tf.transformations import euler_from_quaternion
 from wall_penalty import pen_wall
@@ -32,10 +32,12 @@ class Env():
         self.pub_cmd_vel = rospy.Publisher('cmd_vel', Twist, queue_size=10)
         self.sub_odom = rospy.Subscriber('odom', Odometry, self.getOdometry)
         self.reset_proxy = rospy.ServiceProxy('gazebo/reset_simulation', Empty)
+        self.reset_world = rospy.ServiceProxy('/gazebo/reset_world', Empty)
         self.unpause_proxy = rospy.ServiceProxy('gazebo/unpause_physics', Empty)
         self.pause_proxy = rospy.ServiceProxy('gazebo/pause_physics', Empty)
         self.goal = rospy.ServiceProxy('/gazebo/spawn_sdf_model', SpawnModel)
         self.del_model = rospy.ServiceProxy('/gazebo/delete_model', DeleteModel)
+        self.get_model_state = rospy.ServiceProxy('/gazebo/get_model_state', GetModelState)
         self.past_distance = 0.
         self.sum1 = 0
         self.sum2 = 0
@@ -124,6 +126,22 @@ class Env():
         self.past_distance = goal_distance
 
         return goal_distance
+    
+    def verify_target_pose(self, label=""):
+        """Verify target model exists and get its pose"""
+        try:
+            rospy.wait_for_service('/gazebo/get_model_state', timeout=1.0)
+            resp = self.get_model_state('target', 'world')
+            if resp.success:
+                pos = resp.pose.position
+                print(f"[Env] verify_target_pose [{label}]: target at ({pos.x:.3f}, {pos.y:.3f}, {pos.z:.3f})", flush=True)
+                return True, pos
+            else:
+                print(f"[Env] verify_target_pose [{label}]: get_model_state failed - {resp.status_message}", flush=True)
+                return False, None
+        except Exception as e:
+            print(f"[Env] verify_target_pose [{label}]: Exception - {e}", flush=True)
+            return False, None
 
     def getOdometry(self, odom):
         self.position = odom.pose.pose.position
@@ -210,28 +228,50 @@ class Env():
         if arrive:
             reward = 120.
             self.pub_cmd_vel.publish(Twist())
+            
+            # Pause physics before manipulating models
+            try:
+                rospy.wait_for_service('/gazebo/pause_physics', timeout=1.0)
+                self.pause_proxy()
+            except:
+                pass
+            
+            # Delete old target
             rospy.wait_for_service('/gazebo/delete_model')
-            self.del_model('target')
+            try:
+                self.del_model('target')
+            except:
+                pass
 
-            # Build the target
+            # Build the new target
             rospy.wait_for_service('/gazebo/spawn_sdf_model')
             try:
                 goal_urdf = open(goal_model_dir, "r").read()
                 target = SpawnModel
-                target.model_name = 'target'  # the same with sdf name
+                target.model_name = 'target'
                 target.model_xml = goal_urdf
                 self.goal_position.position.x = random.uniform(-3.6, 3.6)
                 self.goal_position.position.y = random.uniform(-3.6, 3.6)
+                self.goal_position.position.z = 0.01
                 while 1.6 <= self.goal_position.position.x <= 2.4 and -1.4 <= self.goal_position.position.y <= 1.4 \
                         or -2.4 <= self.goal_position.position.x <= -1.6 and -1.4 <= self.goal_position.position.y <= 1.4 \
                         or -1.4 <= self.goal_position.position.x <= 1.4 and 1.6 <= self.goal_position.position.y <= 2.4 \
                         or -1.4 <= self.goal_position.position.x <= 1.4 and -2.4 <= self.goal_position.position.y <= -1.6:
                     self.goal_position.position.x = random.uniform(-3.6, 3.6)
                     self.goal_position.position.y = random.uniform(-3.6, 3.6)
+                
                 self.goal(target.model_name, target.model_xml, 'namespace', self.goal_position, 'world')
+                
             except (rospy.ServiceException) as e:
-                print("/gazebo/failed to build the target")
+                pass
+            
+            # Unpause physics after models are set up
             rospy.wait_for_service('/gazebo/unpause_physics')
+            try:
+                self.unpause_proxy()
+            except:
+                pass
+            
             self.goal_distance = self.getGoalDistace()
             arrive = False
 
@@ -269,36 +309,45 @@ class Env():
         return np.asarray(state), reward, done, arrive
 
     def reset(self):
-        # Reset the env #
+        # Reset the env
+        
+        # Delete old target if it exists
         rospy.wait_for_service('/gazebo/delete_model')
-        self.del_model('target')
-
-        rospy.wait_for_service('gazebo/reset_simulation')
         try:
-            self.reset_proxy()
+            self.del_model('target')
+        except:
+            pass
+        
+        # Reset world (resets robot pose and physics)
+        rospy.wait_for_service('/gazebo/reset_world')
+        try:
+            self.reset_world()
         except (rospy.ServiceException) as e:
-            print("gazebo/reset_simulation service call failed")
+            pass
 
         # Build the targets
         rospy.wait_for_service('/gazebo/spawn_sdf_model')
         try:
             goal_urdf = open(goal_model_dir, "r").read()
             target = SpawnModel
-            target.model_name = 'target'  # the same with sdf name
+            target.model_name = 'target'
             target.model_xml = goal_urdf
 
             self.goal_position.position.x = random.uniform(-3.6, 3.6)
             self.goal_position.position.y = random.uniform(-3.6, 3.6)
+            self.goal_position.position.z = 0.01
             while 1.7 <= self.goal_position.position.x <= 2.3 and -1.2 <= self.goal_position.position.y <= 1.2 \
                     or -2.3 <= self.goal_position.position.x <= -1.7 and -1.2 <= self.goal_position.position.y <= 1.2 \
                     or -1.2 <= self.goal_position.position.x <= 1.2 and 1.7 <= self.goal_position.position.y <= 2.3 \
                     or -1.2 <= self.goal_position.position.x <= 1.2 and -2.3 <= self.goal_position.position.y <= -1.7:
                 self.goal_position.position.x = random.uniform(-3.6, 3.6)
                 self.goal_position.position.y = random.uniform(-3.6, 3.6)
+            
             self.goal(target.model_name, target.model_xml, 'namespace', self.goal_position, 'world')
+            
         except (rospy.ServiceException) as e:
-            print("/gazebo/failed to build the target")
-        rospy.wait_for_service('/gazebo/unpause_physics')
+            pass
+        
         data = None
         while data is None:
             try:
@@ -307,6 +356,7 @@ class Env():
                 pass
 
         self.goal_distance = self.getGoalDistace()
+        
         state, rel_dis, yaw, rel_theta, diff_angle, done, arrive = self.getState(data)
         state = [i / 3.5 for i in state]
         # state = Pick(state, len_batch)
