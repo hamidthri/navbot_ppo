@@ -280,6 +280,36 @@ class PPO:
                 f.write(str(i))
                 f.write('\n')
             f.close()
+            
+            # Compute additional verification metrics
+            with torch.no_grad():
+                # Action statistics
+                action_mean = batch_acts.abs().mean().item()
+                action_std = batch_acts.std().item()
+                # Saturated actions (near limits: linear [0,1], angular [-1,1])
+                linear_saturated = ((batch_acts[:, 0] > 0.95) | (batch_acts[:, 0] < 0.05)).float().mean().item()
+                angular_saturated = ((batch_acts[:, 1].abs() > 0.95)).float().mean().item()
+                saturated_frac = (linear_saturated + angular_saturated) / 2.0
+                
+                # Value target statistics (batch_rtgs)
+                rtg_mean = batch_rtgs.mean().item()
+                rtg_std = batch_rtgs.std().item()
+                rtg_min = batch_rtgs.min().item()
+                rtg_max = batch_rtgs.max().item()
+                rtg_p25 = torch.quantile(batch_rtgs, 0.25).item()
+                rtg_p75 = torch.quantile(batch_rtgs, 0.75).item()
+            
+            # Store metrics
+            self.logger['action_mean'] = action_mean
+            self.logger['action_std'] = action_std
+            self.logger['saturated_frac'] = saturated_frac
+            self.logger['rtg_mean'] = rtg_mean
+            self.logger['rtg_std'] = rtg_std
+            self.logger['rtg_min'] = rtg_min
+            self.logger['rtg_max'] = rtg_max
+            self.logger['rtg_p25'] = rtg_p25
+            self.logger['rtg_p75'] = rtg_p75
+            
             # Normalizing advantages for stability
             A_k = (A_k - A_k.mean()) / (A_k.std() + 1e-10)
 
@@ -326,8 +356,15 @@ class PPO:
                     approx_kl = ((ratios - 1) - log_ratio).mean().item()
                     approx_kl_list.append(approx_kl)
                     
-                    # Entropy (policy)
-                    dist = MultivariateNormal(torch.zeros_like(ratios), self.cov_mat)
+                    # Entropy (policy) - compute from actual policy distribution
+                    # Re-compute mean for current policy
+                    mean = self.actor(batch_obs, vision_feat=batch_vision_feats)
+                    mean_clamped = torch.stack([
+                        torch.clamp(mean[:, 0], 0, 1),
+                        torch.clamp(mean[:, 1], -1, 1)
+                    ], dim=1)
+                    dist = MultivariateNormal(mean_clamped, self.cov_mat)
+                    # Mean entropy per timestep in batch
                     entropy = dist.entropy().mean().item()
                     entropy_list.append(entropy)
                     
@@ -862,6 +899,17 @@ class PPO:
         critic_grad_norm = self.logger.get('critic_grad_norm', 0.0)
         actor_param_delta = self.logger.get('actor_param_delta', 0.0)
         critic_param_delta = self.logger.get('critic_param_delta', 0.0)
+        
+        # Extract verification metrics
+        action_mean = self.logger.get('action_mean', 0.0)
+        action_std = self.logger.get('action_std', 0.0)
+        saturated_frac = self.logger.get('saturated_frac', 0.0)
+        rtg_mean = self.logger.get('rtg_mean', 0.0)
+        rtg_std = self.logger.get('rtg_std', 0.0)
+        rtg_min = self.logger.get('rtg_min', 0.0)
+        rtg_max = self.logger.get('rtg_max', 0.0)
+        rtg_p25 = self.logger.get('rtg_p25', 0.0)
+        rtg_p75 = self.logger.get('rtg_p75', 0.0)
 
         # Print logging statements
         print(flush=True)
@@ -885,6 +933,9 @@ class PPO:
         print(f"PPO Metrics: KL={approx_kl:.6f} | Entropy={entropy:.4f} | ClipFrac={clip_frac:.4f}", flush=True)
         print(f"Grad Norms: Actor={actor_grad_norm:.4f} | Critic={critic_grad_norm:.4f}", flush=True)
         print(f"Param Delta: Actor={actor_param_delta:.6f} | Critic={critic_param_delta:.6f}", flush=True)
+        print(f"---", flush=True)
+        print(f"Action Stats: mean(|a|)={action_mean:.4f} | std(a)={action_std:.4f} | saturated={saturated_frac*100:.1f}%", flush=True)
+        print(f"Value Targets: mean={rtg_mean:.2f} | std={rtg_std:.2f} | range=[{rtg_min:.2f}, {rtg_max:.2f}] | IQR=[{rtg_p25:.2f}, {rtg_p75:.2f}]", flush=True)
         print(f"================================================================================", flush=True)
         print(flush=True)
         

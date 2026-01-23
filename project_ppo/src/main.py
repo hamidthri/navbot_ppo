@@ -439,7 +439,8 @@ def main(args):
     if use_vision:
         print(f"[main] Vision mode enabled for method: {args.method_name}", flush=True)
     
-    env = Env(is_training, use_vision=use_vision, vision_dim=vision_dim)
+    env = Env(is_training, use_vision=use_vision, vision_dim=vision_dim, 
+              use_map_sampler=args.use_map_sampler, debug_sampler=args.debug_sampler)
     
     # State dimension is ONLY base state (LiDAR + pose + past actions)
     # Vision features are handled separately in policy network

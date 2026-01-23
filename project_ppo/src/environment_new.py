@@ -24,7 +24,7 @@ goal_model_dir = os.path.join(os.path.split(os.path.realpath(__file__))[0], '..'
 len_batch = 36  # 360 laser points / 36 = 10 picked laser features
 
 class Env():
-    def __init__(self, is_training, use_vision=False, vision_dim=64):
+    def __init__(self, is_training, use_vision=False, vision_dim=64, use_map_sampler=False, debug_sampler=False):
         self.position = Pose()
         self.goal_position = Pose()
         self.goal_position.position.x = 0.
@@ -45,6 +45,31 @@ class Env():
             self.threshold_arrive = 0.2
         else:
             self.threshold_arrive = 0.4
+        
+        # Map-based sampler setup (optional)
+        self.use_map_sampler = use_map_sampler
+        self.debug_sampler = debug_sampler
+        self.map_sampler = None
+        self.gazebo_helpers = None
+        
+        if self.use_map_sampler:
+            from map_goal_sampler import MapGoalSampler
+            import gazebo_reset_helpers
+            import os
+            
+            # Load map
+            src_dir = os.path.dirname(os.path.abspath(__file__))
+            map_yaml = os.path.join(src_dir, '..', 'maps', 'small_house.yaml')
+            
+            self.map_sampler = MapGoalSampler(
+                map_yaml_path=map_yaml,
+                clearance_start=0.70,  # Higher clearance for robot start
+                clearance_goal=0.30,   # Safe clearance above collision threshold (0.2m)
+                min_distance=2.5,
+                max_distance=8.0
+            )
+            self.gazebo_helpers = gazebo_reset_helpers
+            print(f"[Env] Map-based sampler enabled (clearance: start=0.70m, goal=0.30m, dist=2.5-8.0m)", flush=True)
         
         # Vision setup
         self.use_vision = use_vision
@@ -319,21 +344,45 @@ class Env():
         except:
             pass
         
-        # Reset world (resets robot pose and physics)
-        rospy.wait_for_service('/gazebo/reset_world')
-        try:
-            self.reset_world()
-        except (rospy.ServiceException) as e:
-            pass
+        # Map-based sampler: sample start/goal with clearance guarantees
+        if self.use_map_sampler and self.map_sampler is not None:
+            import math
+            
+            # Sample start pose and goal position
+            start_pose, goal_xy, tries = self.map_sampler.sample_start_and_goal()
+            start_x, start_y, start_yaw = start_pose
+            goal_x, goal_y = goal_xy
+            
+            # Optional debug logging
+            if self.debug_sampler:
+                dist = math.hypot(goal_x - start_x, goal_y - start_y)
+                clearance_start = self.map_sampler.get_clearance(start_x, start_y)
+                clearance_goal = self.map_sampler.get_clearance(goal_x, goal_y)
+                print(f"[RESET] start=({start_x:.2f},{start_y:.2f},{start_yaw:.1f}°) "
+                      f"goal=({goal_x:.2f},{goal_y:.2f}) dist={dist:.2f}m "
+                      f"clearance=(s:{clearance_start:.2f}m, g:{clearance_goal:.2f}m) tries={tries}", 
+                      flush=True)
+            
+            # Teleport robot to start position
+            self.gazebo_helpers.set_robot_pose('turtlebot3_burger', start_x, start_y, start_yaw)
+            
+            # Brief settle time for physics stabilization
+            rospy.sleep(0.2)
+            
+            # Set goal position
+            self.goal_position.position.x = goal_x
+            self.goal_position.position.y = goal_y
+            self.goal_position.position.z = 0.01
+            
+        else:
+            # Default behavior: reset world (resets robot pose and physics)
+            rospy.wait_for_service('/gazebo/reset_world')
+            try:
+                self.reset_world()
+            except (rospy.ServiceException) as e:
+                pass
 
-        # Build the targets
-        rospy.wait_for_service('/gazebo/spawn_sdf_model')
-        try:
-            goal_urdf = open(goal_model_dir, "r").read()
-            target = SpawnModel
-            target.model_name = 'target'
-            target.model_xml = goal_urdf
-
+            # Default goal sampling
             self.goal_position.position.x = random.uniform(-3.6, 3.6)
             self.goal_position.position.y = random.uniform(-3.6, 3.6)
             self.goal_position.position.z = 0.01
@@ -343,6 +392,14 @@ class Env():
                     or -1.2 <= self.goal_position.position.x <= 1.2 and -2.3 <= self.goal_position.position.y <= -1.7:
                 self.goal_position.position.x = random.uniform(-3.6, 3.6)
                 self.goal_position.position.y = random.uniform(-3.6, 3.6)
+        
+        # Build the targets (spawn goal marker)
+        rospy.wait_for_service('/gazebo/spawn_sdf_model')
+        try:
+            goal_urdf = open(goal_model_dir, "r").read()
+            target = SpawnModel
+            target.model_name = 'target'
+            target.model_xml = goal_urdf
             
             self.goal(target.model_name, target.model_xml, 'namespace', self.goal_position, 'world')
             

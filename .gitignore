@@ -4,6 +4,8 @@
 runs/
 record/
 summary/
+captures/
+captures_*/
 
 #####=== Python ===#####
 

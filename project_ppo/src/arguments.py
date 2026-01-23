@@ -41,6 +41,14 @@ def get_args():
         parser.add_argument('--use_external_sampler', dest='use_external_sampler', action='store_true', default=False,
                             help='Use external spawn_goal_sampler for open-space start/goal (default: OFF)')
         
+        # NEW: Map-based sampler flag (with distance transform)
+        parser.add_argument('--use_map_sampler', dest='use_map_sampler', action='store_true', default=False,
+                            help='Use map-based sampler with distance transform for collision-free start/goal (default: OFF)')
+        
+        # NEW: Debug sampler flag (for noisy reset logs)
+        parser.add_argument('--debug_sampler', dest='debug_sampler', action='store_true', default=False,
+                            help='Print detailed reset logs to console (default: OFF)')
+        
         # NEW: Tiny debug run flag
         parser.add_argument('--tiny_debug_run', dest='tiny_debug_run', action='store_true', default=False,
                             help='Fast debug mode: episode_max_steps=20, steps_per_iter=40, max_timesteps=400')
