@@ -11,14 +11,14 @@ pkill -9 -f "gzserver|gzclient|gazebo|roscore|rosmaster|rosout|roslaunch|python3
 sleep 2
 
 # 2) Source environment
-echo "[2/6] Sourcing ROS environment..."
+echo "[2/7] Sourcing ROS environment..."
 source /opt/ros/noetic/setup.bash
 source /root/catkin_ws/devel/setup.bash
 export TURTLEBOT3_MODEL=burger
 export DISPLAY=:1
 
 # 3) Start roscore explicitly
-echo "[3/6] Starting roscore..."
+echo "[3/7] Starting roscore..."
 roscore >/tmp/roscore.log 2>&1 &
 ROSCORE_PID=$!
 echo "roscore PID: $ROSCORE_PID"
@@ -30,7 +30,7 @@ done
 echo "roscore ready!"
 
 # 4) Launch Small House with GUI
-echo "[4/6] Launching Small House world with GUI..."
+echo "[4/7] Launching Small House world with GUI..."
 roslaunch project_ppo navbot_small_house.launch gui:=true >/tmp/gazebo_small_house.log 2>&1 &
 GAZEBO_PID=$!
 echo "Gazebo launch PID: $GAZEBO_PID"
@@ -53,7 +53,7 @@ echo "Gazebo topics ready! (waited ${ELAPSED}s)"
 sleep 3
 
 # 5) Run SHORT training verification
-echo "[5/6] Running training verification (800 timesteps)..."
+echo "[5/7] Running training verification (800 timesteps)..."
 cd /root/catkin_ws/src/project_ppo/src
 
 python3 main.py \
