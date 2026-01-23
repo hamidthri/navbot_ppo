@@ -49,6 +49,10 @@ def get_args():
         parser.add_argument('--debug_sampler', dest='debug_sampler', action='store_true', default=False,
                             help='Print detailed reset logs to console (default: OFF)')
         
+        # NEW: Distance-uniform sampling flag
+        parser.add_argument('--distance_uniform', dest='distance_uniform', action='store_true', default=False,
+                            help='Use distance-uniform goal sampling (sample distance bin first, then goal from bin) instead of spatial-uniform (default: OFF)')
+        
         # NEW: Tiny debug run flag
         parser.add_argument('--tiny_debug_run', dest='tiny_debug_run', action='store_true', default=False,
                             help='Fast debug mode: episode_max_steps=20, steps_per_iter=40, max_timesteps=400')

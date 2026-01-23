@@ -24,7 +24,7 @@ goal_model_dir = os.path.join(os.path.split(os.path.realpath(__file__))[0], '..'
 len_batch = 36  # 360 laser points / 36 = 10 picked laser features
 
 class Env():
-    def __init__(self, is_training, use_vision=False, vision_dim=64, use_map_sampler=False, debug_sampler=False):
+    def __init__(self, is_training, use_vision=False, vision_dim=64, use_map_sampler=False, debug_sampler=False, distance_uniform=False):
         self.position = Pose()
         self.goal_position = Pose()
         self.goal_position.position.x = 0.
@@ -49,6 +49,7 @@ class Env():
         # Map-based sampler setup (optional)
         self.use_map_sampler = use_map_sampler
         self.debug_sampler = debug_sampler
+        self.distance_uniform = distance_uniform
         self.map_sampler = None
         self.gazebo_helpers = None
         
@@ -66,10 +67,14 @@ class Env():
                 clearance_start=0.70,  # Higher clearance for robot start
                 clearance_goal=0.30,   # Safe clearance above collision threshold (0.2m)
                 min_distance=2.5,
-                max_distance=8.0
+                max_distance=8.0,
+                distance_uniform=distance_uniform,
+                distance_bins=10,
+                min_bin_candidates=10
             )
             self.gazebo_helpers = gazebo_reset_helpers
-            print(f"[Env] Map-based sampler enabled (clearance: start=0.70m, goal=0.30m, dist=2.5-8.0m)", flush=True)
+            mode_str = "distance-uniform" if distance_uniform else "spatial-uniform"
+            print(f"[Env] Map-based sampler enabled ({mode_str}, clearance: start=0.70m, goal=0.30m, dist=2.5-8.0m)", flush=True)
         
         # Vision setup
         self.use_vision = use_vision
@@ -348,19 +353,46 @@ class Env():
         if self.use_map_sampler and self.map_sampler is not None:
             import math
             
-            # Sample start pose and goal position
-            start_pose, goal_xy, tries = self.map_sampler.sample_start_and_goal()
+            # Sample start pose
+            start_pose, start_tries = self.map_sampler.sample_start()
             start_x, start_y, start_yaw = start_pose
+            
+            # Sample goal position (distance-uniform or spatial-uniform)
+            if self.distance_uniform:
+                if self.debug_sampler:
+                    goal_xy, goal_tries, _, reach_info = self.map_sampler.sample_goal_distance_uniform(start_pose[:2], debug=True)
+                else:
+                    goal_xy, goal_tries, _ = self.map_sampler.sample_goal_distance_uniform(start_pose[:2], debug=False)
+                    reach_info = None
+            else:
+                if self.debug_sampler:
+                    goal_xy, goal_tries, _, reach_info = self.map_sampler.sample_goal(start_pose[:2], debug=True)
+                else:
+                    goal_xy, goal_tries, _ = self.map_sampler.sample_goal(start_pose[:2], debug=False)
+                    reach_info = None
+            
             goal_x, goal_y = goal_xy
+            tries = start_tries + goal_tries
             
             # Optional debug logging
             if self.debug_sampler:
                 dist = math.hypot(goal_x - start_x, goal_y - start_y)
                 clearance_start = self.map_sampler.get_clearance(start_x, start_y)
                 clearance_goal = self.map_sampler.get_clearance(goal_x, goal_y)
+                
+                reach_str = ""
+                if reach_info:
+                    if self.distance_uniform:
+                        # Distance-uniform mode: show bin info
+                        reach_str = f" dist_uniform=(bin:{reach_info.get('chosen_bin', -1)}, cands:{reach_info.get('reachable_candidates', 0)}, bins:{reach_info.get('bins_nonempty', 0)})"
+                    elif reach_info.get('max_reachable_dist', 0) > 0:
+                        reach_str = f" reach=(max_dist:{reach_info['max_reachable_dist']:.2f}m, comp_size:{reach_info['reachable_component_size']})"
+                    elif reach_info['checked'] > 0:
+                        reach_str = f" reach=(checked:{reach_info['checked']}, rejected:{reach_info['rejected']}, nodes:{reach_info['nodes_explored']})"
+                
                 print(f"[RESET] start=({start_x:.2f},{start_y:.2f},{start_yaw:.1f}°) "
                       f"goal=({goal_x:.2f},{goal_y:.2f}) dist={dist:.2f}m "
-                      f"clearance=(s:{clearance_start:.2f}m, g:{clearance_goal:.2f}m) tries={tries}", 
+                      f"clearance=(s:{clearance_start:.2f}m, g:{clearance_goal:.2f}m) tries={tries}{reach_str}", 
                       flush=True)
             
             # Teleport robot to start position

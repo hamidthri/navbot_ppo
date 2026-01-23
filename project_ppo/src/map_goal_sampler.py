@@ -1,6 +1,7 @@
 """
 Map-based start/goal sampler using OccupancyGrid + DistanceTransform.
 Ensures collision-free sampling with configurable clearance thresholds.
+Includes reachability checking via BFS to ensure goal is accessible from start.
 """
 
 import numpy as np
@@ -9,6 +10,7 @@ from scipy.ndimage import distance_transform_edt
 from PIL import Image
 import math
 import os
+from collections import deque
 
 
 class MapGoalSampler:
@@ -22,7 +24,12 @@ class MapGoalSampler:
                  clearance_goal=0.45,
                  min_distance=2.5,
                  max_distance=8.0,
-                 max_tries=100):
+                 max_tries=100,
+                 check_reachability=True,
+                 max_bfs_nodes=10000,
+                 distance_uniform=False,
+                 distance_bins=10,
+                 min_bin_candidates=10):
         """
         Args:
             map_yaml_path: Path to ROS map YAML file
@@ -31,6 +38,11 @@ class MapGoalSampler:
             min_distance: Minimum Euclidean distance between start and goal (meters)
             max_distance: Maximum Euclidean distance between start and goal (meters)
             max_tries: Maximum sampling attempts before giving up
+            check_reachability: Whether to verify goal is reachable from start via BFS
+            max_bfs_nodes: Maximum BFS nodes to explore (safety limit)
+            distance_uniform: If True, sample uniformly across distance bins (not spatial)
+            distance_bins: Number of equal-width distance bins for distance_uniform mode
+            min_bin_candidates: Minimum candidates per bin to be eligible for sampling
         """
         self.map_yaml_path = map_yaml_path
         self.clearance_start = clearance_start
@@ -38,6 +50,11 @@ class MapGoalSampler:
         self.min_distance = min_distance
         self.max_distance = max_distance
         self.max_tries = max_tries
+        self.check_reachability = check_reachability
+        self.max_bfs_nodes = max_bfs_nodes
+        self.distance_uniform = distance_uniform
+        self.distance_bins = distance_bins
+        self.min_bin_candidates = min_bin_candidates
         
         # Load map and compute distance transforms
         self._load_map(map_yaml_path)
@@ -120,6 +137,73 @@ class MapGoalSampler:
             return self.distance_transform_m[row, col]
         return 0.0
     
+    def _is_reachable(self, start_row, start_col, goal_row, goal_col):
+        """
+        Check if goal cell is reachable from start cell using BFS on free cells.
+        
+        Args:
+            start_row, start_col: Start cell coordinates
+            goal_row, goal_col: Goal cell coordinates
+            
+        Returns:
+            (reachable: bool, nodes_explored: int)
+        """
+        if not self.check_reachability:
+            return True, 0
+        
+        # Check bounds
+        if not (0 <= start_row < self.height and 0 <= start_col < self.width):
+            return False, 0
+        if not (0 <= goal_row < self.height and 0 <= goal_col < self.width):
+            return False, 0
+        
+        # Check if cells are free
+        if self.free_map[start_row, start_col] == 0:
+            return False, 0
+        if self.free_map[goal_row, goal_col] == 0:
+            return False, 0
+        
+        # BFS
+        queue = deque([(start_row, start_col)])
+        visited = set()
+        visited.add((start_row, start_col))
+        nodes_explored = 0
+        
+        # 8-connected neighbors for better connectivity
+        directions = [
+            (-1, 0), (1, 0), (0, -1), (0, 1),  # 4-connected
+            (-1, -1), (-1, 1), (1, -1), (1, 1)  # diagonals
+        ]
+        
+        while queue and nodes_explored < self.max_bfs_nodes:
+            row, col = queue.popleft()
+            nodes_explored += 1
+            
+            # Check if we reached the goal
+            if row == goal_row and col == goal_col:
+                return True, nodes_explored
+            
+            # Explore neighbors
+            for dr, dc in directions:
+                new_row, new_col = row + dr, col + dc
+                
+                # Check bounds
+                if not (0 <= new_row < self.height and 0 <= new_col < self.width):
+                    continue
+                
+                # Check if already visited
+                if (new_row, new_col) in visited:
+                    continue
+                
+                # Check if free cell
+                if self.free_map[new_row, new_col] == 0:
+                    continue
+                
+                visited.add((new_row, new_col))
+                queue.append((new_row, new_col))
+        
+        return False, nodes_explored
+    
     def sample_start(self):
         """
         Sample a valid start position with required clearance.
@@ -146,22 +230,28 @@ class MapGoalSampler:
         
         raise RuntimeError(f"Failed to sample valid start after {self.max_tries} tries")
     
-    def sample_goal(self, start_xy):
+    def sample_goal(self, start_xy, debug=False):
         """
         Sample a valid goal position given start position.
+        Pure uniform sampling over valid cells (no bias).
         
         Args:
             start_xy: (x, y) tuple of start position
+            debug: Whether to return reachability debug info
             
         Returns:
             goal_xy: (x, y) tuple
             tries: number of sampling attempts
             accepted: always True if returns successfully
+            reachability_info: dict with BFS stats (only if debug=True)
         """
         start_x, start_y = start_xy
+        start_row, start_col = self._world_to_pixel(start_x, start_y)
+        
+        reachability_info = {'checked': 0, 'rejected': 0, 'nodes_explored': 0}
         
         for tries in range(1, self.max_tries + 1):
-            # Sample from valid goal cells
+            # Uniform sampling from valid goal cells
             idx = np.random.randint(len(self.valid_goal_cells))
             row, col = self.valid_goal_cells[idx]
             goal_x, goal_y = self._pixel_to_world(row, col)
@@ -175,6 +265,18 @@ class MapGoalSampler:
             dist = math.hypot(goal_x - start_x, goal_y - start_y)
             
             if self.min_distance <= dist <= self.max_distance:
+                # Check reachability
+                if self.check_reachability:
+                    reachable, nodes = self._is_reachable(start_row, start_col, row, col)
+                    reachability_info['checked'] += 1
+                    reachability_info['nodes_explored'] += nodes
+                    
+                    if not reachable:
+                        reachability_info['rejected'] += 1
+                        continue  # Reject unreachable goal
+                
+                if debug:
+                    return (goal_x, goal_y), tries, True, reachability_info
                 return (goal_x, goal_y), tries, True
         
         raise RuntimeError(
@@ -182,6 +284,129 @@ class MapGoalSampler:
             f"(start=({start_x:.2f}, {start_y:.2f}), "
             f"distance range={self.min_distance}-{self.max_distance}m)"
         )
+    
+    def sample_goal_distance_uniform(self, start_xy, debug=False):
+        """
+        Sample goal with uniform distribution across DISTANCE bins (not spatial).
+        
+        Algorithm:
+        1. Compute all reachable goal candidates from start (BFS once)
+        2. Bin candidates by distance
+        3. Sample bin uniformly from non-empty bins with >= min_bin_candidates
+        4. Sample goal uniformly from chosen bin
+        
+        Returns same format as sample_goal().
+        """
+        start_x, start_y = start_xy
+        start_row, start_col = self._world_to_pixel(start_x, start_y)
+        
+        reachability_info = {
+            'checked': 0,
+            'rejected': 0, 
+            'nodes_explored': 0,
+            'reachable_candidates': 0,
+            'bins_nonempty': 0,
+            'chosen_bin': -1
+        }
+        
+        # Step 1: BFS to find all reachable cells from start
+        if not self.check_reachability:
+            # If reachability disabled, use all valid goal cells
+            reachable_cells = set(map(tuple, self.valid_goal_cells))
+        else:
+            queue = deque([(start_row, start_col)])
+            visited = set()
+            visited.add((start_row, start_col))
+            
+            directions = [
+                (-1, 0), (1, 0), (0, -1), (0, 1),
+                (-1, -1), (-1, 1), (1, -1), (1, 1)
+            ]
+            
+            nodes_explored = 0
+            while queue and nodes_explored < self.max_bfs_nodes:
+                row, col = queue.popleft()
+                nodes_explored += 1
+                
+                for dr, dc in directions:
+                    new_row, new_col = row + dr, col + dc
+                    
+                    if not (0 <= new_row < self.height and 0 <= new_col < self.width):
+                        continue
+                    if (new_row, new_col) in visited:
+                        continue
+                    if self.free_map[new_row, new_col] == 0:
+                        continue
+                    
+                    visited.add((new_row, new_col))
+                    queue.append((new_row, new_col))
+            
+            reachable_cells = visited
+            reachability_info['nodes_explored'] = nodes_explored
+        
+        # Step 2: Filter reachable cells by goal clearance and distance
+        # Convert valid_goal_cells to set for O(1) lookup
+        valid_goal_set = set(map(tuple, self.valid_goal_cells))
+        
+        candidates = []
+        for row, col in reachable_cells:
+            # Check if it's a valid goal cell (clearance check)
+            if (row, col) not in valid_goal_set:
+                continue
+            
+            goal_x, goal_y = self._pixel_to_world(row, col)
+            dist = math.hypot(goal_x - start_x, goal_y - start_y)
+            
+            if self.min_distance <= dist <= self.max_distance:
+                candidates.append((row, col, dist))
+        
+        reachability_info['reachable_candidates'] = len(candidates)
+        
+        if len(candidates) == 0:
+            raise RuntimeError(
+                f"No reachable goal candidates found "
+                f"(start=({start_x:.2f}, {start_y:.2f}), reachable_cells={len(reachable_cells)})"
+            )
+        
+        # Step 3: Bin candidates by distance (vectorized)
+        candidates_array = np.array(candidates)
+        rows = candidates_array[:, 0].astype(int)
+        cols = candidates_array[:, 1].astype(int)
+        dists = candidates_array[:, 2]
+        
+        # Create bins
+        bin_width = (self.max_distance - self.min_distance) / self.distance_bins
+        bin_edges = np.linspace(self.min_distance, self.max_distance, self.distance_bins + 1)
+        bin_indices = np.digitize(dists, bin_edges) - 1  # 0-indexed bins
+        bin_indices = np.clip(bin_indices, 0, self.distance_bins - 1)  # Handle edge cases
+        
+        # Group candidates by bin
+        bins = [[] for _ in range(self.distance_bins)]
+        for i, bin_idx in enumerate(bin_indices):
+            bins[bin_idx].append(i)  # Store index into candidates array
+        
+        # Count non-empty bins with sufficient candidates
+        eligible_bins = [b for b in range(self.distance_bins) if len(bins[b]) >= self.min_bin_candidates]
+        reachability_info['bins_nonempty'] = len([b for b in bins if len(b) > 0])
+        
+        if len(eligible_bins) == 0:
+            # Fallback: use non-empty bins even if below min_bin_candidates
+            eligible_bins = [b for b in range(self.distance_bins) if len(bins[b]) > 0]
+            if len(eligible_bins) == 0:
+                raise RuntimeError(f"No non-empty bins (candidates={len(candidates)})")
+        
+        # Step 4: Sample bin uniformly from eligible bins
+        chosen_bin = np.random.choice(eligible_bins)
+        reachability_info['chosen_bin'] = chosen_bin
+        
+        # Step 5: Sample goal uniformly from chosen bin
+        candidate_idx = np.random.choice(bins[chosen_bin])
+        goal_row, goal_col, goal_dist = candidates[candidate_idx]
+        goal_x, goal_y = self._pixel_to_world(int(goal_row), int(goal_col))
+        
+        if debug:
+            return (goal_x, goal_y), 1, True, reachability_info
+        return (goal_x, goal_y), 1, True
     
     def sample_start_and_goal(self):
         """
