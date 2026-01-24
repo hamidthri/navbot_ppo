@@ -126,3 +126,4 @@ project_ppo/src/_debug/
 # Analysis/utility scripts (temporary)
 project_ppo/src/analyze_learning.py
 project_ppo/src/visualize_results.py
+aws-robomaker-small-house-world/

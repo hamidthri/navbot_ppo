@@ -5,9 +5,10 @@ services:
     build: .
     image: navbot-ppo:latest
     container_name: navbot-ppo
-    user: "6941:1040"  # otaheri:ps (prevents root-owned files on bind mount)
+    # Run as root to access /root/catkin_ws (file ownership preserved via bind mount)
+    # user: "6941:1040"
     environment:
-      - DISPLAY=:0
+      - DISPLAY=:1
       - TURTLEBOT3_MODEL=burger
       - QT_X11_NO_MITSHM=1
     volumes:

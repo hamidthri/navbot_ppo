@@ -3,12 +3,19 @@ FROM osrf/ros:noetic-desktop-full
 ENV DEBIAN_FRONTEND=noninteractive
 ENV TURTLEBOT3_MODEL=burger
 
-# Install dependencies
+# Install dependencies including OSMesa for headless rendering
 RUN apt-get update && apt-get install -y \
     python3-pip \
     python3-catkin-tools \
     python3-rosdep \
     git \
+    libosmesa6 \
+    mesa-utils \
+    libgl1-mesa-glx \
+    libgl1-mesa-dri \
+    libglapi-mesa \
+    gazebo11 \
+    libgazebo11-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python packages - use cu102 which works with system CUDA
