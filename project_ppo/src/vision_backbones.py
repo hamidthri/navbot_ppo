@@ -16,7 +16,8 @@ def get_backbone(name: str, device: torch.device) -> Tuple[nn.Module, int, Calla
     Get a frozen vision backbone with preprocessing function.
     
     Args:
-        name: Backbone identifier (mobilenet_v2, resnet18, resnet34, resnet50, clip_vit_b32)
+        name: Backbone identifier (mobilenet_v2, resnet18, resnet34, resnet50, clip_vit_b32,
+              dinov2_vits14, dinov2_vitb14, dinov2_vitl14, dinov2_vitg14)
         device: Device to load model on
         
     Returns:
@@ -28,7 +29,7 @@ def get_backbone(name: str, device: torch.device) -> Tuple[nn.Module, int, Calla
     
     name = name.lower()
     
-    # ImageNet normalization (used by torchvision models)
+    # ImageNet normalization (used by torchvision models and DINOv2)
     imagenet_normalize = transforms.Normalize(
         mean=[0.485, 0.456, 0.406],
         std=[0.229, 0.224, 0.225]
@@ -104,10 +105,84 @@ def get_backbone(name: str, device: torch.device) -> Tuple[nn.Module, int, Calla
         
         preprocess_fn = clip_preprocess
         
+    # DINOv2 models
+    elif name in ['dinov2_vits14', 'dinov2_vitb14', 'dinov2_vitl14', 'dinov2_vitg14']:
+        try:
+            # NOTE: DINOv2 official repo requires Python 3.10+ (uses | union syntax)
+            # Workaround for Python 3.8: Load weights manually
+            
+            # DINOv2 feature dimensions
+            feat_dims = {
+                'dinov2_vits14': 384,
+                'dinov2_vitb14': 768,
+                'dinov2_vitl14': 1024,
+                'dinov2_vitg14': 1536,
+            }
+            feat_dim = feat_dims[name]
+            
+            # Try torch.hub first (works if Python >= 3.10)
+            try:
+                model = torch.hub.load('facebookresearch/dinov2', name, trust_repo=True)
+                print(f"[Vision] Loaded {name} via torch.hub (feat_dim={feat_dim})", flush=True)
+            except (TypeError, SyntaxError) as e:
+                # Python 3.8 compatibility: use timm's DINOv2 models (slightly different but compatible)
+                print(f"[Vision] torch.hub failed (Python 3.8), using timm's DINOv2 implementation...", flush=True)
+                
+                # Import timm (required for ViT models)
+                try:
+                    import timm
+                except ImportError:
+                    raise ImportError(
+                        "DINOv2 on Python 3.8 requires timm. Install with:\n"
+                        "  pip install timm\n"
+                    )
+                
+                # Map to timm's vit_*_patch14_reg4_dinov2 models (224x224 native)
+                timm_model_names = {
+                    'dinov2_vits14': 'vit_small_patch14_reg4_dinov2.lvd142m',
+                    'dinov2_vitb14': 'vit_base_patch14_reg4_dinov2.lvd142m',
+                    'dinov2_vitl14': 'vit_large_patch14_reg4_dinov2.lvd142m',
+                    'dinov2_vitg14': 'vit_giant_patch14_reg4_dinov2.lvd142m',
+                }
+                
+                timm_model_name = timm_model_names.get(name)
+                if not timm_model_name:
+                    raise ValueError(f"No timm equivalent for {name}")
+                
+                # Create model via timm (uses 224x224 by default)
+                model = timm.create_model(
+                    timm_model_name,
+                    pretrained=True,
+                    num_classes=0,  # Remove classification head
+                )
+                
+                print(f"[Vision] Loaded {name} via timm (feat_dim={feat_dim})", flush=True)
+            
+            def dinov2_preprocess(img_np: np.ndarray) -> torch.Tensor:
+                """Preprocess numpy RGB image for DINOv2."""
+                # DINOv2 (timm) models expect 518x518 by default
+                # img_np is (H, W, 3) uint8 RGB
+                img_tensor = torch.from_numpy(img_np).float() / 255.0  # (H, W, 3) in [0, 1]
+                img_tensor = img_tensor.permute(2, 0, 1)  # (3, H, W)
+                img_tensor = transforms.Resize((518, 518), antialias=True)(img_tensor)
+                img_tensor = imagenet_normalize(img_tensor)
+                img_tensor = img_tensor.unsqueeze(0)  # (1, 3, 518, 518)
+                return img_tensor.to(device)
+            
+            preprocess_fn = dinov2_preprocess
+            
+        except Exception as e:
+            raise RuntimeError(
+                f"Failed to load {name}. Error: {e}\n"
+                f"For Python 3.8, install timm: pip install timm\n"
+                f"For Python 3.10+, torch.hub should work directly."
+            )
+        
     else:
         raise ValueError(
             f"Unknown backbone: {name}. "
-            f"Supported: mobilenet_v2, resnet18, resnet34, resnet50, clip_vit_b32"
+            f"Supported: mobilenet_v2, resnet18, resnet34, resnet50, clip_vit_b32, "
+            f"dinov2_vits14, dinov2_vitb14, dinov2_vitl14, dinov2_vitg14"
         )
     
     # Freeze all parameters

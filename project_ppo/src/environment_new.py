@@ -64,7 +64,7 @@ class Env():
             
             self.map_sampler = MapGoalSampler(
                 map_yaml_path=map_yaml,
-                clearance_start=0.70,  # Higher clearance for robot start
+                clearance_start=0.50,  # Minimum 0.5m clearance for robot start
                 clearance_goal=0.30,   # Safe clearance above collision threshold (0.2m)
                 min_distance=2.5,
                 max_distance=8.0,
@@ -74,7 +74,7 @@ class Env():
             )
             self.gazebo_helpers = gazebo_reset_helpers
             mode_str = "distance-uniform" if distance_uniform else "spatial-uniform"
-            print(f"[Env] Map-based sampler enabled ({mode_str}, clearance: start=0.70m, goal=0.30m, dist=2.5-8.0m)", flush=True)
+            print(f"[Env] Map-based sampler enabled ({mode_str}, clearance: start=0.50m, goal=0.30m, dist=2.5-8.0m)", flush=True)
         
         # Vision setup
         self.use_vision = use_vision
@@ -353,58 +353,112 @@ class Env():
         if self.use_map_sampler and self.map_sampler is not None:
             import math
             
-            # Sample start pose
-            start_pose, start_tries = self.map_sampler.sample_start()
-            start_x, start_y, start_yaw = start_pose
-            
-            # Sample goal position (distance-uniform or spatial-uniform)
-            if self.distance_uniform:
-                if self.debug_sampler:
-                    goal_xy, goal_tries, _, reach_info = self.map_sampler.sample_goal_distance_uniform(start_pose[:2], debug=True)
-                else:
-                    goal_xy, goal_tries, _ = self.map_sampler.sample_goal_distance_uniform(start_pose[:2], debug=False)
-                    reach_info = None
-            else:
-                if self.debug_sampler:
-                    goal_xy, goal_tries, _, reach_info = self.map_sampler.sample_goal(start_pose[:2], debug=True)
-                else:
-                    goal_xy, goal_tries, _ = self.map_sampler.sample_goal(start_pose[:2], debug=False)
-                    reach_info = None
-            
-            goal_x, goal_y = goal_xy
-            tries = start_tries + goal_tries
-            
-            # Optional debug logging
-            if self.debug_sampler:
-                dist = math.hypot(goal_x - start_x, goal_y - start_y)
-                clearance_start = self.map_sampler.get_clearance(start_x, start_y)
-                clearance_goal = self.map_sampler.get_clearance(goal_x, goal_y)
+            # Retry logic: try up to 3 times to get valid reset (no immediate collision)
+            max_reset_attempts = 3
+            for attempt in range(max_reset_attempts):
+                # Sample start pose
+                start_pose, start_tries = self.map_sampler.sample_start()
+                start_x, start_y, start_yaw = start_pose
                 
-                reach_str = ""
-                if reach_info:
-                    if self.distance_uniform:
-                        # Distance-uniform mode: show bin info
-                        reach_str = f" dist_uniform=(bin:{reach_info.get('chosen_bin', -1)}, cands:{reach_info.get('reachable_candidates', 0)}, bins:{reach_info.get('bins_nonempty', 0)})"
-                    elif reach_info.get('max_reachable_dist', 0) > 0:
-                        reach_str = f" reach=(max_dist:{reach_info['max_reachable_dist']:.2f}m, comp_size:{reach_info['reachable_component_size']})"
-                    elif reach_info['checked'] > 0:
-                        reach_str = f" reach=(checked:{reach_info['checked']}, rejected:{reach_info['rejected']}, nodes:{reach_info['nodes_explored']})"
+                # Sample goal position (distance-uniform or spatial-uniform)
+                if self.distance_uniform:
+                    if self.debug_sampler:
+                        goal_xy, goal_tries, _, reach_info = self.map_sampler.sample_goal_distance_uniform(start_pose[:2], debug=True)
+                    else:
+                        goal_xy, goal_tries, _ = self.map_sampler.sample_goal_distance_uniform(start_pose[:2], debug=False)
+                        reach_info = None
+                else:
+                    if self.debug_sampler:
+                        goal_xy, goal_tries, _, reach_info = self.map_sampler.sample_goal(start_pose[:2], debug=True)
+                    else:
+                        goal_xy, goal_tries, _ = self.map_sampler.sample_goal(start_pose[:2], debug=False)
+                        reach_info = None
                 
-                print(f"[RESET] start=({start_x:.2f},{start_y:.2f},{start_yaw:.1f}°) "
-                      f"goal=({goal_x:.2f},{goal_y:.2f}) dist={dist:.2f}m "
-                      f"clearance=(s:{clearance_start:.2f}m, g:{clearance_goal:.2f}m) tries={tries}{reach_str}", 
-                      flush=True)
+                goal_x, goal_y = goal_xy
+                tries = start_tries + goal_tries
+                
+                # Optional debug logging
+                if self.debug_sampler:
+                    dist = math.hypot(goal_x - start_x, goal_y - start_y)
+                    clearance_start = self.map_sampler.get_clearance(start_x, start_y)
+                    clearance_goal = self.map_sampler.get_clearance(goal_x, goal_y)
+                    
+                    reach_str = ""
+                    if reach_info:
+                        if self.distance_uniform:
+                            # Distance-uniform mode: show bin info
+                            reach_str = f" dist_uniform=(bin:{reach_info.get('chosen_bin', -1)}, cands:{reach_info.get('reachable_candidates', 0)}, bins:{reach_info.get('bins_nonempty', 0)})"
+                        elif reach_info.get('max_reachable_dist', 0) > 0:
+                            reach_str = f" reach=(max_dist:{reach_info['max_reachable_dist']:.2f}m, comp_size:{reach_info['reachable_component_size']})"
+                        elif reach_info['checked'] > 0:
+                            reach_str = f" reach=(checked:{reach_info['checked']}, rejected:{reach_info['rejected']}, nodes:{reach_info['nodes_explored']})"
+                    
+                    print(f"[RESET] start=({start_x:.2f},{start_y:.2f},{start_yaw:.1f}°) "
+                          f"goal=({goal_x:.2f},{goal_y:.2f}) dist={dist:.2f}m "
+                          f"clearance=(s:{clearance_start:.2f}m, g:{clearance_goal:.2f}m) tries={tries}{reach_str}", 
+                          flush=True)
+                
+                # Teleport robot to start position
+                self.gazebo_helpers.set_robot_pose('turtlebot3_burger', start_x, start_y, start_yaw)
+                
+                # Longer settle time for physics stabilization + flush stale scans
+                rospy.sleep(0.5)
+                
+                # Flush 2 stale scan messages (from before teleport)
+                for _ in range(2):
+                    try:
+                        rospy.wait_for_message('scan', LaserScan, timeout=1.0)
+                    except:
+                        pass
+                
+                # Set goal position
+                self.goal_position.position.x = goal_x
+                self.goal_position.position.y = goal_y
+                self.goal_position.position.z = 0.01
+                
+                # Build the targets (spawn goal marker)
+                rospy.wait_for_service('/gazebo/spawn_sdf_model')
+                try:
+                    goal_urdf = open(goal_model_dir, "r").read()
+                    target = SpawnModel
+                    target.model_name = 'target'
+                    target.model_xml = goal_urdf
+                    
+                    self.goal(target.model_name, target.model_xml, 'namespace', self.goal_position, 'world')
+                    
+                except (rospy.ServiceException) as e:
+                    pass
+                
+                # Get fresh scan after physics settled
+                data = None
+                while data is None:
+                    try:
+                        data = rospy.wait_for_message('scan', LaserScan, timeout=5)
+                    except:
+                        pass
+
+                self.goal_distance = self.getGoalDistace()
+                
+                # Validate: check if first state triggers immediate collision
+                state, rel_dis, yaw, rel_theta, diff_angle, done, arrive = self.getState(data)
+                
+                # If no immediate collision, accept this reset
+                if not done:
+                    break
+                
+                # Collision detected in reset - retry with new sample
+                if self.debug_sampler or attempt == max_reset_attempts - 1:
+                    min_scan = min([r for r in data.ranges if not np.isnan(r) and r != float('Inf')])
+                    print(f"[RESET WARNING] Attempt {attempt+1}/{max_reset_attempts}: Immediate collision detected (min_scan={min_scan:.3f}m < 0.2m). Resampling...", flush=True)
+                
+                # Delete the spawned target before retrying
+                try:
+                    self.del_model('target')
+                except:
+                    pass
             
-            # Teleport robot to start position
-            self.gazebo_helpers.set_robot_pose('turtlebot3_burger', start_x, start_y, start_yaw)
-            
-            # Brief settle time for physics stabilization
-            rospy.sleep(0.2)
-            
-            # Set goal position
-            self.goal_position.position.x = goal_x
-            self.goal_position.position.y = goal_y
-            self.goal_position.position.z = 0.01
+            # Build final state
+            state = [i / 3.5 for i in state]
             
         else:
             # Default behavior: reset world (resets robot pose and physics)
@@ -425,30 +479,30 @@ class Env():
                 self.goal_position.position.x = random.uniform(-3.6, 3.6)
                 self.goal_position.position.y = random.uniform(-3.6, 3.6)
         
-        # Build the targets (spawn goal marker)
-        rospy.wait_for_service('/gazebo/spawn_sdf_model')
-        try:
-            goal_urdf = open(goal_model_dir, "r").read()
-            target = SpawnModel
-            target.model_name = 'target'
-            target.model_xml = goal_urdf
-            
-            self.goal(target.model_name, target.model_xml, 'namespace', self.goal_position, 'world')
-            
-        except (rospy.ServiceException) as e:
-            pass
-        
-        data = None
-        while data is None:
+            # Build the targets (spawn goal marker)
+            rospy.wait_for_service('/gazebo/spawn_sdf_model')
             try:
-                data = rospy.wait_for_message('scan', LaserScan, timeout=5)
-            except:
+                goal_urdf = open(goal_model_dir, "r").read()
+                target = SpawnModel
+                target.model_name = 'target'
+                target.model_xml = goal_urdf
+                
+                self.goal(target.model_name, target.model_xml, 'namespace', self.goal_position, 'world')
+                
+            except (rospy.ServiceException) as e:
                 pass
+            
+            data = None
+            while data is None:
+                try:
+                    data = rospy.wait_for_message('scan', LaserScan, timeout=5)
+                except:
+                    pass
 
-        self.goal_distance = self.getGoalDistace()
-        
-        state, rel_dis, yaw, rel_theta, diff_angle, done, arrive = self.getState(data)
-        state = [i / 3.5 for i in state]
+            self.goal_distance = self.getGoalDistace()
+            
+            state, rel_dis, yaw, rel_theta, diff_angle, done, arrive = self.getState(data)
+            state = [i / 3.5 for i in state]
         
         # Uniform sampling: select 10 evenly-spaced samples from normalized scan
         L = len(state)

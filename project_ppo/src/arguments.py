@@ -32,8 +32,9 @@ def get_args():
         parser.add_argument('--save_every_iterations', dest='save_every_iterations', type=int, default=2)  # save checkpoint every N iterations
         parser.add_argument('--resume', dest='resume', action='store_true', default=False)  # resume from existing checkpoint
         parser.add_argument('--dry_run_vision', dest='dry_run_vision', action='store_true', default=False)  # dry-run mode without Gazebo
-        parser.add_argument('--vision_backbone', dest='vision_backbone', type=str, default='mobilenet_v2',
-                            choices=['mobilenet_v2', 'resnet18', 'resnet34', 'resnet50', 'clip_vit_b32'],
+        parser.add_argument('--vision_backbone', dest='vision_backbone', type=str, default='resnet18',
+                            choices=['mobilenet_v2', 'resnet18', 'resnet34', 'resnet50', 'clip_vit_b32', 
+                                     'dinov2_vits14', 'dinov2_vitb14', 'dinov2_vitl14', 'dinov2_vitg14'],
                             help='Vision backbone architecture')
         parser.add_argument('--vision_proj_dim', dest='vision_proj_dim', type=int, default=64, help='Vision projection dimension')
         
