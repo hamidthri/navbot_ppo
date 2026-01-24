@@ -466,6 +466,10 @@ def main(args):
     # NOTE: Here's where you can set hyperparameters for PPO. I don't include them as part of
     # ArgumentParser because it's too annoying to type them every time at command line. Instead, you can change them here.
     # To see a list of hyperparameters, look in ppo.py at function _init_hyperparameters
+    
+    # Use run_name if provided, otherwise fall back to method_name
+    effective_method_name = args.run_name if args.run_name else args.method_name
+    
     hyperparameters = {
         'timesteps_per_batch': args.steps_per_iteration,
         'max_timesteps_per_episode': args.timesteps_per_episode,
@@ -477,7 +481,7 @@ def main(args):
         'render_every_i': 10,
         'save_freq': args.save_every_iterations,
         'exp_id': "v02_simple_env_60_reward_proportion",
-        'method_name': args.method_name,
+        'method_name': effective_method_name,
         'state_dim': actual_state_dim,
         'output_dir': args.output_dir,
         'resume': args.resume,
