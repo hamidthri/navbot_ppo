@@ -122,3 +122,7 @@ project_ppo/src/summary/
 project_ppo/src/runs/*/
 project_ppo/captures/
 project_ppo/src/_debug/
+
+# Analysis/utility scripts (temporary)
+project_ppo/src/analyze_learning.py
+project_ppo/src/visualize_results.py
