@@ -100,8 +100,8 @@ class Env():
         if self.use_vision:
             print(f"[Env] Initializing vision mode (raw image only, no encoder in env)", flush=True)
             # Subscribe to camera topic
-            # Real Gazebo camera topic: /camera/rgb/image_raw (published by /gazebo plugin)
-            self.image_topic = '/camera/rgb/image_raw'
+            # TurtleBot3 burger camera topic: /robot_camera/image_raw (published by Gazebo libgazebo_ros_camera.so)
+            self.image_topic = '/robot_camera/image_raw'
             self.sub_camera = rospy.Subscriber(self.image_topic, Image, self.imageCallback)
             print(f"[Env] Subscribed to {self.image_topic}", flush=True)
             
@@ -130,6 +130,8 @@ class Env():
             # Convert BGR to RGB
             import cv2
             self.latest_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
+            # Store ROS timestamp
+            self.latest_image_stamp = msg.header.stamp.to_sec()
             if not self.image_ok:
                 self.image_ok = True
                 print(f"[Env] Image callback received: {msg.encoding}, {msg.width}x{msg.height}, converted to RGB numpy array", flush=True)
@@ -143,6 +145,14 @@ class Env():
         if not self.use_vision or self.latest_image is None:
             return None
         return self.latest_image
+    
+    def getImageAge(self):
+        """Return age of latest image in seconds, or None if unavailable"""
+        if not hasattr(self, 'latest_image_stamp'):
+            return None
+        import rospy
+        current_time = rospy.Time.now().to_sec()
+        return current_time - self.latest_image_stamp
     
     def getVisionFeatures(self):
         """Deprecated - vision features now computed in policy network"""
