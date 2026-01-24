@@ -24,7 +24,7 @@ goal_model_dir = os.path.join(os.path.split(os.path.realpath(__file__))[0], '..'
 len_batch = 36  # 360 laser points / 36 = 10 picked laser features
 
 class Env():
-    def __init__(self, is_training, use_vision=False, vision_dim=64, use_map_sampler=False, debug_sampler=False, distance_uniform=False):
+    def __init__(self, is_training, use_vision=False, vision_dim=64, use_map_sampler=False, debug_sampler=False, distance_uniform=False, reward_type='legacy'):
         self.position = Pose()
         self.goal_position = Pose()
         self.goal_position.position.x = 0.
@@ -45,6 +45,21 @@ class Env():
             self.threshold_arrive = 0.2
         else:
             self.threshold_arrive = 0.4
+        
+        # Reward system setup
+        self.reward_type = reward_type
+        if reward_type == 'fuzzy':
+            import sys
+            import os
+            sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'rewards'))
+            from fuzzy_reward import FuzzyReward
+            self.reward_fn = FuzzyReward()
+        else:
+            import sys
+            import os
+            sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'rewards'))
+            from legacy_reward import LegacyReward
+            self.reward_fn = LegacyReward()
         
         # Map-based sampler setup (optional)
         self.use_map_sampler = use_map_sampler
@@ -236,19 +251,31 @@ class Env():
 
         return scan_range, current_distance, yaw, rel_theta, diff_angle, done, arrive
 
-    def setReward(self, done, arrive):
+    def setReward(self, done, arrive, scan_range=None):
         current_distance = math.hypot(self.goal_position.position.x - self.position.x, self.goal_position.position.y - self.position.y)
-        distance_rate = (self.past_distance - current_distance)
-
-        reward = 500.*distance_rate
-        self.past_distance = current_distance
-
-        if done:
-            reward = -100.
-            self.pub_cmd_vel.publish(Twist())
-
+        
+        # Use reward function based on type
+        if self.reward_type == 'fuzzy':
+            # Fuzzy reward needs: current_distance, yaw, rel_theta, min_lidar, done, arrive
+            min_lidar = min(scan_range) if scan_range else 0.2
+            reward = self.reward_fn.compute(
+                current_distance=current_distance,
+                current_yaw=self.yaw,
+                current_rel_theta=self.rel_theta,
+                min_lidar=min_lidar,
+                done=done,
+                arrive=arrive
+            )
+        else:
+            # Legacy reward (original logic)
+            reward = self.reward_fn.compute(
+                current_distance=current_distance,
+                done=done,
+                arrive=arrive
+            )
+        
+        # Legacy behavior for arrive: respawn goal
         if arrive:
-            reward = 120.
             self.pub_cmd_vel.publish(Twist())
             
             # Pause physics before manipulating models
@@ -295,6 +322,13 @@ class Env():
                 pass
             
             self.goal_distance = self.getGoalDistace()
+            
+            # Reset reward function state for new goal
+            if self.reward_type == 'fuzzy':
+                self.reward_fn.reset(self.goal_distance, self.yaw, self.rel_theta)
+            else:
+                self.reward_fn.reset(self.goal_distance)
+            
             arrive = False
 
         return reward
@@ -336,7 +370,7 @@ class Env():
         # Vision mode: return base state vector only (NO vision features appended here)
         # Image will be handled separately in PPO rollout
         
-        reward = self.setReward(done, arrive)
+        reward = self.setReward(done, arrive, scan_range=state)
         return np.asarray(base_state), reward, done, arrive
 
     def reset(self):
@@ -439,6 +473,12 @@ class Env():
 
                 self.goal_distance = self.getGoalDistace()
                 
+                # Initialize reward function state
+                if self.reward_type == 'fuzzy':
+                    self.reward_fn.reset(self.goal_distance, self.yaw, self.rel_theta)
+                else:
+                    self.reward_fn.reset(self.goal_distance)
+                
                 # Validate: check if first state triggers immediate collision
                 state, rel_dis, yaw, rel_theta, diff_angle, done, arrive = self.getState(data)
                 
@@ -500,6 +540,12 @@ class Env():
                     pass
 
             self.goal_distance = self.getGoalDistace()
+            
+            # Initialize reward function state
+            if self.reward_type == 'fuzzy':
+                self.reward_fn.reset(self.goal_distance, self.yaw, self.rel_theta)
+            else:
+                self.reward_fn.reset(self.goal_distance)
             
             state, rel_dis, yaw, rel_theta, diff_angle, done, arrive = self.getState(data)
             state = [i / 3.5 for i in state]

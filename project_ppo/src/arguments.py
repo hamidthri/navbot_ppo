@@ -59,6 +59,11 @@ def get_args():
         parser.add_argument('--tiny_debug_run', dest='tiny_debug_run', action='store_true', default=False,
                             help='Fast debug mode: episode_max_steps=20, steps_per_iter=40, max_timesteps=400')
         
+        # NEW: Reward type selection
+        parser.add_argument('--reward_type', dest='reward_type', type=str, default='legacy',
+                            choices=['legacy', 'fuzzy'],
+                            help='Reward function type: legacy (default) or fuzzy')
+        
         args = parser.parse_args()
 
         # Set default output_dir to repo_root/runs if not specified

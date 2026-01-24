@@ -5,6 +5,7 @@ services:
     build: .
     image: navbot-ppo:latest
     container_name: navbot-ppo
+    user: "6941:1040"  # otaheri:ps (prevents root-owned files on bind mount)
     environment:
       - DISPLAY=:0
       - TURTLEBOT3_MODEL=burger
