@@ -30,14 +30,28 @@ class RectRegionSampler:
     """
     Sample start/goal poses from predefined rectangular regions.
     Enforces: start_region != goal_region
+    
+    SHAPED DISTANCE SAMPLING:
+    - Samples goal distance r from shaped distribution (bins + probabilities)
+    - Then samples goal at that distance from start
+    - Ensures goals fall within valid regions and constraints
     """
     
-    def __init__(self, robot_radius=0.105, clearance_margin=0.30, max_tries=100):
+    def __init__(self, robot_radius=0.105, clearance_margin=0.30, max_tries=100,
+                 use_shaped_distance=True, distance_bins=None, bin_probs=None,
+                 min_goal_dist=2.0, max_goal_dist=12.0):
         """
         Args:
             robot_radius: Robot radius in meters
             clearance_margin: Safety margin from rectangle boundaries
             max_tries: Maximum attempts before giving up
+            use_shaped_distance: Enable shaped distance sampling
+            distance_bins: List of (min, max) tuples for distance bins
+                          Default: [(2,6), (6,10), (10,12)]
+            bin_probs: List of probabilities for each bin (must sum to 1.0)
+                      Default: [0.70, 0.25, 0.05]
+            min_goal_dist: Hard minimum goal distance (m)
+            max_goal_dist: Hard maximum goal distance (m)
         """
         self.robot_radius = robot_radius
         self.clearance_margin = clearance_margin
@@ -45,12 +59,32 @@ class RectRegionSampler:
         self.max_tries = max_tries
         self.regions = RECT_REGIONS
         
+        # Shaped distance sampling configuration
+        self.use_shaped_distance = use_shaped_distance
+        self.min_goal_dist = min_goal_dist
+        self.max_goal_dist = max_goal_dist
+        
+        if distance_bins is None:
+            self.distance_bins = [(2.0, 6.0), (6.0, 10.0), (10.0, 12.0)]
+        else:
+            self.distance_bins = distance_bins
+            
+        if bin_probs is None:
+            self.bin_probs = [0.70, 0.25, 0.05]
+        else:
+            self.bin_probs = bin_probs
+            
+        # Validate configuration
+        assert len(self.distance_bins) == len(self.bin_probs), "Bins and probs must match"
+        assert abs(sum(self.bin_probs) - 1.0) < 1e-6, "Probabilities must sum to 1.0"
+        
         # Statistics
         self.stats = {
             "start_region_counts": {i: 0 for i in range(1, 14)},
             "goal_region_counts": {i: 0 for i in range(1, 14)},
             "total_samples": 0,
-            "rejections": {"boundary": 0, "same_region": 0, "max_tries": 0},
+            "rejections": {"boundary": 0, "same_region": 0, "max_tries": 0, "shaped_distance": 0},
+            "distances": [],  # Track actual start-goal distances
         }
     
     def _sample_point_in_region(self, region):
@@ -80,9 +114,81 @@ class RectRegionSampler:
         y = np.random.uniform(y_min_safe, y_max_safe)
         return (x, y)
     
+    def _point_in_region(self, x, y, region):
+        """
+        Check if a point is within a region (respecting clearance).
+        
+        Args:
+            x, y: Point coordinates
+            region: Dict with 'x' and 'y' bounds
+            
+        Returns:
+            bool: True if point is safely within region
+        """
+        x_min, x_max = region["x"]
+        y_min, y_max = region["y"]
+        
+        x_min_safe = x_min + self.total_clearance
+        x_max_safe = x_max - self.total_clearance
+        y_min_safe = y_min + self.total_clearance
+        y_max_safe = y_max - self.total_clearance
+        
+        return (x_min_safe <= x <= x_max_safe) and (y_min_safe <= y <= y_max_safe)
+    
+    def _sample_distance_from_bins(self):
+        """
+        Sample a target distance from shaped distribution.
+        
+        Returns:
+            float: Target distance in meters
+        """
+        # Sample a bin
+        bin_idx = np.random.choice(len(self.distance_bins), p=self.bin_probs)
+        bin_min, bin_max = self.distance_bins[bin_idx]
+        
+        # Sample uniformly within bin
+        r = np.random.uniform(bin_min, bin_max)
+        
+        # Clamp to hard limits
+        r = np.clip(r, self.min_goal_dist, self.max_goal_dist)
+        
+        return r
+    
+    def _sample_goal_at_distance(self, start_x, start_y, start_region_id, target_distance):
+        """
+        Sample a goal at approximately target_distance from start.
+        
+        Args:
+            start_x, start_y: Start position
+            start_region_id: Start region ID
+            target_distance: Target distance in meters
+            
+        Returns:
+            tuple: ((goal_x, goal_y), goal_region_id) or None if failed
+        """
+        # Try to find a valid goal at the target distance
+        for attempt in range(self.max_tries):
+            # Sample random angle
+            theta = np.random.uniform(0, 2 * np.pi)
+            
+            # Propose goal at target distance
+            goal_x = start_x + target_distance * np.cos(theta)
+            goal_y = start_y + target_distance * np.sin(theta)
+            
+            # Check if goal is in a valid region (different from start)
+            for region in self.regions:
+                if region["id"] == start_region_id:
+                    continue  # Skip start region
+                    
+                if self._point_in_region(goal_x, goal_y, region):
+                    return (goal_x, goal_y), region["id"]
+        
+        return None
+    
     def sample_start_goal(self):
         """
         Sample start pose and goal position from different regions.
+        Uses shaped distance sampling if enabled.
         
         Returns:
             tuple: ((start_x, start_y, start_yaw), (goal_x, goal_y), 
@@ -90,32 +196,63 @@ class RectRegionSampler:
             or None if sampling fails
         """
         for attempt in range(self.max_tries):
-            # Sample two different regions
+            # Sample start region and point
             start_region = random.choice(self.regions)
-            
-            # Filter out start_region for goal sampling
-            goal_candidates = [r for r in self.regions if r["id"] != start_region["id"]]
-            goal_region = random.choice(goal_candidates)
-            
-            # Sample points
             start_point = self._sample_point_in_region(start_region)
-            goal_point = self._sample_point_in_region(goal_region)
             
-            if start_point is None or goal_point is None:
+            if start_point is None:
                 self.stats["rejections"]["boundary"] += 1
                 continue
+            
+            start_x, start_y = start_point
+            
+            if self.use_shaped_distance:
+                # SHAPED DISTANCE SAMPLING
+                # Sample target distance from bins
+                target_distance = self._sample_distance_from_bins()
+                
+                # Sample goal at that distance
+                goal_result = self._sample_goal_at_distance(
+                    start_x, start_y, start_region["id"], target_distance
+                )
+                
+                if goal_result is None:
+                    self.stats["rejections"]["shaped_distance"] += 1
+                    continue
+                    
+                goal_point, goal_region_id = goal_result
+                goal_x, goal_y = goal_point
+                
+                # Find the goal region object
+                goal_region = next(r for r in self.regions if r["id"] == goal_region_id)
+                
+            else:
+                # ORIGINAL METHOD: Sample goal region independently
+                goal_candidates = [r for r in self.regions if r["id"] != start_region["id"]]
+                goal_region = random.choice(goal_candidates)
+                goal_point = self._sample_point_in_region(goal_region)
+                
+                if goal_point is None:
+                    self.stats["rejections"]["boundary"] += 1
+                    continue
+                    
+                goal_x, goal_y = goal_point
             
             # Sample random yaw for start
             start_yaw = np.random.uniform(-np.pi, np.pi)
             
+            # Calculate actual distance
+            actual_distance = np.sqrt((goal_x - start_x)**2 + (goal_y - start_y)**2)
+            
             # Success
-            start_pose = (start_point[0], start_point[1], start_yaw)
-            goal_pose = goal_point
+            start_pose = (start_x, start_y, start_yaw)
+            goal_pose = (goal_x, goal_y)
             
             # Update stats
             self.stats["start_region_counts"][start_region["id"]] += 1
             self.stats["goal_region_counts"][goal_region["id"]] += 1
             self.stats["total_samples"] += 1
+            self.stats["distances"].append(actual_distance)
             
             return start_pose, goal_pose, start_region["id"], goal_region["id"]
         
@@ -133,18 +270,47 @@ class RectRegionSampler:
             "start_region_counts": {i: 0 for i in range(1, 14)},
             "goal_region_counts": {i: 0 for i in range(1, 14)},
             "total_samples": 0,
-            "rejections": {"boundary": 0, "same_region": 0, "max_tries": 0},
+            "rejections": {"boundary": 0, "same_region": 0, "max_tries": 0, "shaped_distance": 0},
+            "distances": [],
         }
     
     def print_stats(self):
-        """Print formatted statistics."""
+        """Print formatted statistics including distance distribution."""
         print("\n" + "="*60)
         print("Rectangle Region Sampler Statistics")
         print("="*60)
         print(f"Total samples: {self.stats['total_samples']}")
+        print(f"Shaped distance sampling: {'ENABLED' if self.use_shaped_distance else 'DISABLED'}")
+        
+        if self.use_shaped_distance:
+            print(f"\nDistance bins and probabilities:")
+            for i, (bin_range, prob) in enumerate(zip(self.distance_bins, self.bin_probs)):
+                print(f"  Bin {i+1}: [{bin_range[0]:.1f}, {bin_range[1]:.1f}]m -> {prob*100:.1f}%")
+        
         print(f"\nRejections:")
         for reason, count in self.stats["rejections"].items():
             print(f"  {reason}: {count}")
+        
+        # Distance statistics
+        if self.stats["distances"]:
+            distances = np.array(self.stats["distances"])
+            print(f"\nDistance Distribution (start→goal Euclidean):")
+            print(f"  Min:    {distances.min():.2f}m")
+            print(f"  Mean:   {distances.mean():.2f}m")
+            print(f"  Max:    {distances.max():.2f}m")
+            print(f"  Median (p50): {np.percentile(distances, 50):.2f}m")
+            print(f"  p90:    {np.percentile(distances, 90):.2f}m")
+            print(f"  p95:    {np.percentile(distances, 95):.2f}m")
+            
+            # Threshold percentages
+            pct_above_10 = 100.0 * np.sum(distances > 10.0) / len(distances)
+            pct_above_12 = 100.0 * np.sum(distances > 12.0) / len(distances)
+            pct_above_16 = 100.0 * np.sum(distances > 16.0) / len(distances)
+            
+            print(f"\nThreshold Analysis:")
+            print(f"  >10m: {pct_above_10:5.1f}%")
+            print(f"  >12m: {pct_above_12:5.1f}%")
+            print(f"  >16m: {pct_above_16:5.1f}%")
         
         print(f"\nStart region distribution:")
         for region_id in sorted(self.stats["start_region_counts"].keys()):
