@@ -24,7 +24,7 @@ goal_model_dir = os.path.join(os.path.split(os.path.realpath(__file__))[0], '..'
 len_batch = 36  # 360 laser points / 36 = 10 picked laser features
 
 class Env():
-    def __init__(self, is_training, use_vision=False, vision_dim=64, sampler_mode='legacy', debug_sampler=False, distance_uniform=False, reward_type='legacy'):
+    def __init__(self, is_training, use_vision=False, vision_dim=64, sampler_mode='legacy', debug_sampler=False, distance_uniform=False, reward_type='legacy', fixed_case_path=None, method_run_dir=None):
         self.position = Pose()
         self.goal_position = Pose()
         self.goal_position.position.x = 0.
@@ -48,12 +48,12 @@ class Env():
         
         # Reward system setup
         self.reward_type = reward_type
-        if reward_type == 'fuzzy':
+        if reward_type == 'fuzzy3':
             import sys
             import os
             sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'rewards'))
-            from fuzzy_reward import FuzzyReward
-            self.reward_fn = FuzzyReward()
+            from fuzzy3_reward import Fuzzy3Reward
+            self.reward_fn = Fuzzy3Reward()
         else:
             import sys
             import os
@@ -106,6 +106,26 @@ class Env():
             )
             self.gazebo_helpers = gazebo_reset_helpers
             print(f"[Env] Rectangle region sampler enabled (13 regions, start != goal)", flush=True)
+        
+        # Fixed case capture/replay setup
+        self.fixed_case_path = fixed_case_path
+        self.method_run_dir = method_run_dir
+        self.fixed_case = None
+        self.fixed_case_saved = False
+        self.episode_count = 0
+        
+        if fixed_case_path:
+            # Replay mode: load fixed case
+            import json
+            try:
+                with open(fixed_case_path, 'r') as f:
+                    self.fixed_case = json.load(f)
+                print(f"[Env] Fixed case replay mode enabled: {fixed_case_path}", flush=True)
+                print(f"[Env]   Start: ({self.fixed_case['start_x']:.2f}, {self.fixed_case['start_y']:.2f}, {self.fixed_case['start_yaw']:.1f}°)", flush=True)
+                print(f"[Env]   Goal: ({self.fixed_case['goal_x']:.2f}, {self.fixed_case['goal_y']:.2f})", flush=True)
+            except Exception as e:
+                print(f"[Env] ERROR: Failed to load fixed case from {fixed_case_path}: {e}", flush=True)
+                self.fixed_case = None
         
         # Vision setup
         self.use_vision = use_vision
@@ -281,14 +301,13 @@ class Env():
         current_distance = math.hypot(self.goal_position.position.x - self.position.x, self.goal_position.position.y - self.position.y)
         
         # Use reward function based on type
-        if self.reward_type == 'fuzzy':
-            # Fuzzy reward needs: current_distance, yaw, rel_theta, min_lidar, done, arrive
-            min_lidar = min(scan_range) if scan_range else 0.2
+        if self.reward_type == 'fuzzy3':
+            # Fuzzy3 reward needs: current_distance, yaw, rel_theta, scan_range, done, arrive
             reward = self.reward_fn.compute(
                 current_distance=current_distance,
                 current_yaw=self.yaw,
                 current_rel_theta=self.rel_theta,
-                min_lidar=min_lidar,
+                scan_range=scan_range,
                 done=done,
                 arrive=arrive
             )
@@ -350,10 +369,7 @@ class Env():
             self.goal_distance = self.getGoalDistace()
             
             # Reset reward function state for new goal
-            if self.reward_type == 'fuzzy':
-                self.reward_fn.reset(self.goal_distance, self.yaw, self.rel_theta)
-            else:
-                self.reward_fn.reset(self.goal_distance)
+            self.reward_fn.reset(self.goal_distance)
             
             arrive = False
 
@@ -375,8 +391,10 @@ class Env():
             except:
                 pass
 
-        state, rel_dis, yaw, rel_theta, diff_angle, done, arrive = self.getState(data)
-        state = [i / 3.5 for i in state]
+        raw_scan_range, rel_dis, yaw, rel_theta, diff_angle, done, arrive = self.getState(data)
+        
+        # Normalize scan for policy (NOT for reward function)
+        state = [i / 3.5 for i in raw_scan_range]
         
         # Uniform sampling: select 10 evenly-spaced samples from normalized scan
         L = len(state)
@@ -396,11 +414,15 @@ class Env():
         # Vision mode: return base state vector only (NO vision features appended here)
         # Image will be handled separately in PPO rollout
         
-        reward = self.setReward(done, arrive, scan_range=state)
+        # CRITICAL: Pass raw scan_range (meters) to reward, not normalized state
+        reward = self.setReward(done, arrive, scan_range=raw_scan_range)
         return np.asarray(base_state), reward, done, arrive
 
     def reset(self):
         # Reset the env
+        
+        # Increment episode counter
+        self.episode_count += 1
         
         # Delete old target if it exists
         rospy.wait_for_service('/gazebo/delete_model')
@@ -409,8 +431,19 @@ class Env():
         except:
             pass
         
+        # Fixed case replay mode
+        if self.fixed_case:
+            start_x = self.fixed_case['start_x']
+            start_y = self.fixed_case['start_y']
+            start_yaw = self.fixed_case['start_yaw']
+            goal_x = self.fixed_case['goal_x']
+            goal_y = self.fixed_case['goal_y']
+            
+            if self.episode_count == 1:
+                print(f"[RESET] Replaying fixed case: start=({start_x:.2f},{start_y:.2f},{start_yaw:.1f}°) goal=({goal_x:.2f},{goal_y:.2f})", flush=True)
+        
         # Map-based sampler: sample start/goal with clearance guarantees
-        if self.use_map_sampler and self.map_sampler is not None:
+        elif self.use_map_sampler and self.map_sampler is not None:
             import math
             
             # Retry logic: try up to 3 times to get valid reset (no immediate collision)
@@ -458,6 +491,31 @@ class Env():
                           f"clearance=(s:{clearance_start:.2f}m, g:{clearance_goal:.2f}m) tries={tries}{reach_str}", 
                           flush=True)
                 
+                # Fixed case capture: save first episode to JSON
+                if self.episode_count == 1 and not self.fixed_case_saved and self.method_run_dir:
+                    import json
+                    import os
+                    fixed_case_data = {
+                        'start_x': float(start_x),
+                        'start_y': float(start_y),
+                        'start_yaw': float(start_yaw),
+                        'goal_x': float(goal_x),
+                        'goal_y': float(goal_y),
+                        'map_name': 'small_house',
+                        'sampler_mode': self.sampler_mode,
+                        'distance_uniform': self.distance_uniform,
+                        'timestamp': str(rospy.Time.now())
+                    }
+                    fixed_case_path = os.path.join(self.method_run_dir, 'fixed_case.json')
+                    try:
+                        with open(fixed_case_path, 'w') as f:
+                            json.dump(fixed_case_data, f, indent=2)
+                        self.fixed_case_saved = True
+                        print(f"[RESET] Fixed case captured to: {fixed_case_path}", flush=True)
+                        print(f"[RESET]   start=({start_x:.2f},{start_y:.2f},{start_yaw:.1f}°) goal=({goal_x:.2f},{goal_y:.2f})", flush=True)
+                    except Exception as e:
+                        print(f"[RESET] ERROR: Failed to save fixed case: {e}", flush=True)
+                
                 # Teleport robot to start position
                 self.gazebo_helpers.set_robot_pose('turtlebot3_burger', start_x, start_y, start_yaw)
                 
@@ -500,10 +558,7 @@ class Env():
                 self.goal_distance = self.getGoalDistace()
                 
                 # Initialize reward function state
-                if self.reward_type == 'fuzzy':
-                    self.reward_fn.reset(self.goal_distance, self.yaw, self.rel_theta)
-                else:
-                    self.reward_fn.reset(self.goal_distance)
+                self.reward_fn.reset(self.goal_distance)
                 
                 # Validate: check if first state triggers immediate collision
                 state, rel_dis, yaw, rel_theta, diff_angle, done, arrive = self.getState(data)
@@ -590,10 +645,7 @@ class Env():
                 self.goal_distance = self.getGoalDistace()
                 
                 # Initialize reward function
-                if self.reward_type == 'fuzzy':
-                    self.reward_fn.reset(self.goal_distance, self.yaw, self.rel_theta)
-                else:
-                    self.reward_fn.reset(self.goal_distance)
+                self.reward_fn.reset(self.goal_distance)
                 
                 # Build state
                 state, rel_dis, yaw, rel_theta, diff_angle, done, arrive = self.getState(data)
@@ -641,10 +693,7 @@ class Env():
             self.goal_distance = self.getGoalDistace()
             
             # Initialize reward function state
-            if self.reward_type == 'fuzzy':
-                self.reward_fn.reset(self.goal_distance, self.yaw, self.rel_theta)
-            else:
-                self.reward_fn.reset(self.goal_distance)
+            self.reward_fn.reset(self.goal_distance)
             
             state, rel_dis, yaw, rel_theta, diff_angle, done, arrive = self.getState(data)
             state = [i / 3.5 for i in state]

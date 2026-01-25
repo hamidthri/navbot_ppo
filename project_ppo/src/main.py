@@ -226,7 +226,6 @@ def train(env, hyperparameters, actor_model, critic_model, max_timesteps=5000, a
 
     # Train the PPO model with a specified total timesteps
     agent.learn(total_timesteps=max_timesteps, past_action=past_action)
-    #
 
 def test(env, actor_model):
     """
@@ -581,9 +580,13 @@ def main(args):
         # Legacy flag override
         sampler_mode = 'external'
     
+    # Compute method_run_dir before creating env (needed for fixed case capture)
+    method_run_dir = os.path.join(args.output_dir, args.method_name)
+    
     env = Env(is_training, use_vision=use_vision, vision_dim=vision_dim, 
               sampler_mode=sampler_mode, debug_sampler=args.debug_sampler,
-              distance_uniform=args.distance_uniform, reward_type=args.reward_type)
+              distance_uniform=args.distance_uniform, reward_type=args.reward_type,
+              fixed_case_path=args.fixed_case_path, method_run_dir=method_run_dir)
     
     # State dimension is ONLY base state (LiDAR + pose + past actions)
     # Vision features are handled separately in policy network

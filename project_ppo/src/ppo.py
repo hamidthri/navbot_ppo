@@ -500,11 +500,11 @@ class PPO:
             # Save our model if it's time
 
             if i_so_far % self.save_freq == 0:
-                actor_path = os.path.join(self.checkpoint_dir, f'actor_iter{i_so_far:04d}_step{t_so_far:08d}.pth')
-                critic_path = os.path.join(self.checkpoint_dir, f'critic_iter{i_so_far:04d}_step{t_so_far:08d}.pth')
+                actor_path = os.path.join(self.checkpoint_dir, f'actor_iter{i_so_far:04d}_step{int(t_so_far):08d}.pth')
+                critic_path = os.path.join(self.checkpoint_dir, f'critic_iter{i_so_far:04d}_step{int(t_so_far):08d}.pth')
                 torch.save(self.actor.state_dict(), actor_path)
                 torch.save(self.critic.state_dict(), critic_path)
-                print(f"[PPO] Saved checkpoint at iteration {i_so_far}, step {t_so_far}: {actor_path}", flush=True)
+                print(f"[PPO] Saved checkpoint at iteration {i_so_far}, step {int(t_so_far)}: {actor_path}", flush=True)
             
             # Check if we should stop after this iteration
             if t_so_far >= total_timesteps:

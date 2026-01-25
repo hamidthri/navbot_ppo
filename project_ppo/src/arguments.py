@@ -83,10 +83,14 @@ def get_args():
         parser.add_argument('--tiny_debug_run', dest='tiny_debug_run', action='store_true', default=False,
                             help='Fast debug mode: episode_max_steps=20, steps_per_iter=40, max_timesteps=400')
         
-        # NEW: Reward type selection
+        # Reward type selection
         parser.add_argument('--reward_type', dest='reward_type', type=str, default='legacy',
-                            choices=['legacy', 'fuzzy'],
-                            help='Reward function type: legacy (default) or fuzzy')
+                            choices=['legacy', 'fuzzy3'],
+                            help='Reward function type: legacy (default) or fuzzy3 (3-input Sugeno)')
+        
+        # Fixed case capture/replay for debugging
+        parser.add_argument('--fixed_case_path', dest='fixed_case_path', type=str, default=None,
+                            help='Path to fixed_case.json for replay mode (replays same start/goal)')
         
         args = parser.parse_args()
 

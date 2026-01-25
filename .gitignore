@@ -128,6 +128,18 @@ project_ppo/src/analyze_learning.py
 project_ppo/src/visualize_results.py
 aws-robomaker-small-house-world/
 
-# find the runs_test and ignore it
+# Test and debug output folders
 runs_test/
+tests_debug/
+fuzzy3_viz/
+**/tb/
+**/logs/
+**/checkpoints/*.pth
+**/checkpoints/*.pt
+
+# Training artifacts
+*.pth
+*.pt
+fixed_case.json
+fuzzy3_test_report.json
 

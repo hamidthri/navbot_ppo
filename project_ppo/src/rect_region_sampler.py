@@ -39,7 +39,7 @@ class RectRegionSampler:
     
     def __init__(self, robot_radius=0.105, clearance_margin=0.30, max_tries=100,
                  use_shaped_distance=True, distance_bins=None, bin_probs=None,
-                 min_goal_dist=2.0, max_goal_dist=12.0):
+                 min_goal_dist=None, max_goal_dist=None):
         """
         Args:
             robot_radius: Robot radius in meters
@@ -61,16 +61,18 @@ class RectRegionSampler:
         
         # Shaped distance sampling configuration
         self.use_shaped_distance = use_shaped_distance
-        self.min_goal_dist = min_goal_dist
-        self.max_goal_dist = max_goal_dist
+        self.min_goal_dist = min_goal_dist if min_goal_dist is not None else 1.5
+        self.max_goal_dist = max_goal_dist if max_goal_dist is not None else 10.0
         
         if distance_bins is None:
-            self.distance_bins = [(2.0, 6.0), (6.0, 10.0), (10.0, 12.0)]
+            # Closer goals, more accessible training scenarios
+            self.distance_bins = [(1.5, 4.5), (4.5, 7.5), (7.5, 10.0)]
         else:
             self.distance_bins = distance_bins
             
         if bin_probs is None:
-            self.bin_probs = [0.70, 0.25, 0.05]
+            # Favor closer goals: 75% close, 20% medium, 5% far
+            self.bin_probs = [0.75, 0.20, 0.05]
         else:
             self.bin_probs = bin_probs
             
