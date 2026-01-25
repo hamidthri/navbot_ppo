@@ -7,7 +7,11 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 import numpy as np
+import math
 from vision_backbones import ProjectionMLP
+
+# Import fusion modules from net_actor
+from net_actor import ViTFiLMTokenLearnerFusion
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 class ResBlock(nn.Module):
@@ -130,7 +134,178 @@ class NetCritic(nn.Module):
         return output
 
 
+class ViTFiLMTokenLearnerCritic(nn.Module):
+    """
+    Critic with ViT tokens + FiLM + TokenLearner fusion.
+    """
+    def __init__(self,
+                 in_dim,
+                 out_dim,
+                 n_neurons=512,
+                 use_vision=False,
+                 vision_feat_dim=384,
+                 num_learned_tokens=8,
+                 vision_emb_dim=128,
+                 **kwargs):
+        super().__init__()
+        
+        self.use_vision = use_vision
+        self.base_state_dim = in_dim
+        
+        if not self.use_vision:
+            raise ValueError("ViTFiLMTokenLearnerCritic requires use_vision=True")
+        
+        # Fusion
+        self.fusion = ViTFiLMTokenLearnerFusion(
+            base_state_dim=in_dim,
+            token_dim=vision_feat_dim,
+            num_learned_tokens=num_learned_tokens,
+            vision_emb_dim=vision_emb_dim
+        )
+        
+        fused_dim = in_dim + vision_emb_dim
+        
+        # Value head
+        self.rb1 = ResBlock(fused_dim, fused_dim, n_neurons)
+        self.rb2 = ResBlock(fused_dim + fused_dim, fused_dim + fused_dim, n_neurons)
+        self.out = nn.Linear(fused_dim + fused_dim, out_dim)
+        
+        print(f"[ViTFiLMTokenLearnerCritic] base={in_dim}, vision_emb={vision_emb_dim}, fused={fused_dim}", flush=True)
+    
+    def forward(self, obs, vision_tokens=None):
+        if isinstance(obs, np.ndarray):
+            obs = torch.tensor(obs, dtype=torch.float)
+        obs = obs.to(device)
+        
+        needs_unsqueeze = (obs.dim() == 1)
+        if needs_unsqueeze:
+            obs = obs.unsqueeze(0)
+        
+        B = obs.shape[0]
+        
+        if vision_tokens is None:
+            N = 256
+            vision_tokens = torch.zeros(B, N, self.vision_feat_dim, device=device)
+        else:
+            if isinstance(vision_tokens, np.ndarray):
+                vision_tokens = torch.tensor(vision_tokens, dtype=torch.float)
+            vision_tokens = vision_tokens.to(device)
+            if vision_tokens.dim() == 2:
+                vision_tokens = vision_tokens.unsqueeze(0)
+        
+        # Fusion
+        X0 = self.fusion(vision_tokens, obs)
+        
+        # Value head
+        X = self.rb1(X0, True)
+        X = self.rb2(torch.cat([X0, X], dim=-1), True)
+        output = self.out(X)
+        
+        if needs_unsqueeze:
+            output = output.squeeze(0)
+        
+        return output
+
+
+class RecurrentViTFiLMTokenLearnerCritic(nn.Module):
+    """
+    Recurrent Critic with GRU.
+    """
+    def __init__(self,
+                 in_dim,
+                 out_dim,
+                 n_neurons=512,
+                 use_vision=False,
+                 vision_feat_dim=384,
+                 num_learned_tokens=8,
+                 vision_emb_dim=128,
+                 gru_hidden_dim=128,
+                 **kwargs):
+        super().__init__()
+        
+        self.use_vision = use_vision
+        self.gru_hidden_dim = gru_hidden_dim
+        
+        if not self.use_vision:
+            raise ValueError("RecurrentViTFiLMTokenLearnerCritic requires use_vision=True")
+        
+        # Fusion
+        self.fusion = ViTFiLMTokenLearnerFusion(
+            base_state_dim=in_dim,
+            token_dim=vision_feat_dim,
+            num_learned_tokens=num_learned_tokens,
+            vision_emb_dim=vision_emb_dim
+        )
+        
+        fused_dim = in_dim + vision_emb_dim
+        
+        # GRU
+        self.gru = nn.GRU(fused_dim, gru_hidden_dim, batch_first=True)
+        
+        # Value head
+        self.rb1 = ResBlock(gru_hidden_dim, gru_hidden_dim, n_neurons)
+        self.rb2 = ResBlock(gru_hidden_dim + gru_hidden_dim, gru_hidden_dim + gru_hidden_dim, n_neurons)
+        final_dim = gru_hidden_dim + gru_hidden_dim
+        self.out = nn.Linear(final_dim, out_dim)
+        
+        self.hidden = None
+        
+        print(f"[RecurrentViTFiLMTokenLearnerCritic] gru_hidden={gru_hidden_dim}", flush=True)
+    
+    def forward(self, obs, vision_tokens=None, done=None):
+        if isinstance(obs, np.ndarray):
+            obs = torch.tensor(obs, dtype=torch.float)
+        obs = obs.to(device)
+        
+        needs_unsqueeze = (obs.dim() == 1)
+        if needs_unsqueeze:
+            obs = obs.unsqueeze(0)
+        
+        B = obs.shape[0]
+        
+        if vision_tokens is None:
+            N = 256
+            vision_tokens = torch.zeros(B, N, self.vision_feat_dim, device=device)
+        else:
+            if isinstance(vision_tokens, np.ndarray):
+                vision_tokens = torch.tensor(vision_tokens, dtype=torch.float)
+            vision_tokens = vision_tokens.to(device)
+            if vision_tokens.dim() == 2:
+                vision_tokens = vision_tokens.unsqueeze(0)
+        
+        # Fusion
+        fused = self.fusion(vision_tokens, obs)
+        
+        # GRU
+        if self.hidden is None or self.hidden.shape[1] != B:
+            self.hidden = torch.zeros(1, B, self.gru_hidden_dim, device=device)
+        
+        if done is not None:
+            if isinstance(done, np.ndarray):
+                done = torch.tensor(done, dtype=torch.float, device=device)
+            done = done.to(device).view(1, B, 1)
+            self.hidden = self.hidden * (1 - done)
+        
+        fused_seq = fused.unsqueeze(1)
+        gru_out, self.hidden = self.gru(fused_seq, self.hidden)
+        gru_out = gru_out.squeeze(1)
+        
+        # Value head
+        X = self.rb1(gru_out, True)
+        X = self.rb2(torch.cat([gru_out, X], dim=-1), True)
+        output = self.out(X)
+        
+        if needs_unsqueeze:
+            output = output.squeeze(0)
+        
+        return output
+    
+    def reset_hidden(self):
+        self.hidden = None
+
+
 class NetCritic_old(nn.Module):
+
     """
 A standard in_dim-64-64-out_dim Feed Forward Neural Network.
     """

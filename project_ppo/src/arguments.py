@@ -41,6 +41,17 @@ def get_args():
                             help='Vision backbone architecture')
         parser.add_argument('--vision_proj_dim', dest='vision_proj_dim', type=int, default=64, help='Vision projection dimension')
         
+        # NEW: Architecture selection
+        parser.add_argument('--architecture', dest='architecture', type=str, default='default',
+                            choices=['default', 'vit_film_tokenlearner', 'recurrent_vit_film_tokenlearner'],
+                            help='Policy architecture: default (simple projection), vit_film_tokenlearner (FiLM+TokenLearner), recurrent (with GRU)')
+        parser.add_argument('--num_learned_tokens', dest='num_learned_tokens', type=int, default=8,
+                            help='Number of learned tokens for TokenLearner (K)')
+        parser.add_argument('--vision_emb_dim', dest='vision_emb_dim', type=int, default=128,
+                            help='Vision embedding dimension after TokenLearner+FiLM readout')
+        parser.add_argument('--gru_hidden_dim', dest='gru_hidden_dim', type=int, default=128,
+                            help='GRU hidden state dimension for recurrent architectures')
+        
         # NEW: Sampler mode selection
         parser.add_argument('--sampler_mode', dest='sampler_mode', type=str, default='map',
                             choices=['map', 'rect_regions', 'external'],

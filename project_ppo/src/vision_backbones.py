@@ -217,3 +217,67 @@ class ProjectionMLP(nn.Module):
             (batch, proj_dim) projected features
         """
         return self.net(x)
+
+
+def extract_vision_tokens(backbone: nn.Module, x: torch.Tensor, backbone_name: str) -> torch.Tensor:
+    """
+    Extract spatial tokens from vision backbone.
+    
+    Args:
+        backbone: Vision model (frozen)
+        x: (B, 3, H, W) preprocessed image
+        backbone_name: Backbone identifier
+    
+    Returns:
+        tokens: (B, N, C) where N is number of spatial tokens, C is token dimension
+    """
+    with torch.no_grad():
+        # DINOv2/ViT models
+        if 'dinov2' in backbone_name or 'vit' in backbone_name or 'clip' in backbone_name:
+            # ViT models output tokens directly or can be accessed via forward_features
+            if hasattr(backbone, 'forward_features'):
+                # timm models
+                tokens = backbone.forward_features(x)  # (B, N+1, C) with CLS token
+                # Remove CLS token (first token)
+                if tokens.shape[1] > 1:
+                    tokens = tokens[:, 1:, :]  # (B, N, C)
+                return tokens
+            elif hasattr(backbone, 'get_intermediate_layers'):
+                # Official DINOv2
+                output = backbone.get_intermediate_layers(x, n=1)[0]  # (B, N+1, C)
+                # Remove CLS token
+                if output.shape[1] > 1:
+                    tokens = output[:, 1:, :]
+                else:
+                    tokens = output
+                return tokens
+            else:
+                # Fallback: run forward and try to extract
+                output = backbone(x)
+                if isinstance(output, torch.Tensor):
+                    if output.dim() == 3:
+                        # Already tokens (B, N, C)
+                        return output
+                    elif output.dim() == 2:
+                        # Pooled features (B, C) -> treat as single token
+                        return output.unsqueeze(1)  # (B, 1, C)
+                    elif output.dim() == 4:
+                        # Spatial features (B, C, H, W) -> flatten to tokens
+                        B, C, H, W = output.shape
+                        tokens = output.reshape(B, C, H*W).permute(0, 2, 1)  # (B, H*W, C)
+                        return tokens
+        
+        # CNN models (MobileNet, ResNet, etc.)
+        else:
+            output = backbone(x)
+            if output.dim() == 4:
+                # (B, C, H, W) -> (B, H*W, C)
+                B, C, H, W = output.shape
+                tokens = output.reshape(B, C, H*W).permute(0, 2, 1)
+                return tokens
+            elif output.dim() == 2:
+                # (B, C) -> (B, 1, C)
+                return output.unsqueeze(1)
+    
+    raise ValueError(f"Could not extract tokens from {backbone_name}, output shape: {output.shape}")
+

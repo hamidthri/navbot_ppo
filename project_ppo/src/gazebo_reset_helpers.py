@@ -51,6 +51,12 @@ def set_robot_pose(model_name, x, y, yaw, frame_id='world', z=0.07):
         return resp.success
     except (rospy.ServiceException, rospy.ROSException) as e:
         rospy.logwarn(f'[gazebo_reset_helpers] Failed to set robot pose: {e}')
+        # Try to unpause physics even if setting failed
+        try:
+            unpause = rospy.ServiceProxy('/gazebo/unpause_physics', Empty)
+            unpause()
+        except:
+            pass
         return False
 
 def move_goal_marker(marker_name, x, y, z=0.01, frame_id='world'):

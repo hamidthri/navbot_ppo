@@ -109,8 +109,18 @@ class PPO:
             'vision_proj_dim': vision_proj_dim
         }
         
+        # Add architecture-specific hyperparameters if present
+        arch_specific_keys = ['num_learned_tokens', 'vision_emb_dim', 'gru_hidden_dim']
+        for key in arch_specific_keys:
+            if key in hyperparameters:
+                actor_kwargs[key] = hyperparameters[key]
+                critic_kwargs[key] = hyperparameters[key]
+        
         self.actor = policy_class(self.obs_dim, self.act_dim, **actor_kwargs).to(device)
         self.critic = value_func(self.obs_dim, 1, **critic_kwargs).to(device)
+        
+        # Check if actor needs vision tokens (for FiLM+TokenLearner architectures)
+        self.use_vision_tokens = hasattr(self.actor, 'forward') and 'vision_tokens' in self.actor.forward.__code__.co_varnames
 
         # Initialize optimizers (vision projection params are inside actor/critic)
         self.actor_optim = Adam(self.actor.parameters(), lr=self.lr)
@@ -358,7 +368,10 @@ class PPO:
                     
                     # Entropy (policy) - compute from actual policy distribution
                     # Re-compute mean for current policy
-                    mean = self.actor(batch_obs, vision_feat=batch_vision_feats)
+                    if self.use_vision_tokens and batch_vision_feats is not None:
+                        mean = self.actor(batch_obs, vision_tokens=batch_vision_feats)
+                    else:
+                        mean = self.actor(batch_obs, vision_feat=batch_vision_feats)
                     mean_clamped = torch.stack([
                         torch.clamp(mean[:, 0], 0, 1),
                         torch.clamp(mean[:, 1], -1, 1)
@@ -554,13 +567,27 @@ class PPO:
                     # Preprocess and extract features
                     with torch.inference_mode():
                         img_tensor = self.vision_preprocess(img)  # (1, 3, H, W)
-                        vision_feat_tensor = self.vision_backbone(img_tensor)  # (1, feat_dim, ...) or (1, feat_dim)
-                        # Flatten to (feat_dim,) if needed
-                        if vision_feat_tensor.dim() > 2:
-                            vision_feat_tensor = torch.nn.functional.adaptive_avg_pool2d(vision_feat_tensor, (1, 1))
-                        vision_feat = vision_feat_tensor.squeeze().cpu().numpy()  # (feat_dim,)
+                        
+                        # Extract tokens if needed (for FiLM+TokenLearner architectures)
+                        if self.use_vision_tokens:
+                            from vision_backbones import extract_vision_tokens
+                            vision_feat_tensor = extract_vision_tokens(self.vision_backbone, img_tensor, self.backbone_name)
+                            # vision_feat_tensor: (1, N, C) tokens
+                            vision_feat = vision_feat_tensor.squeeze(0).cpu().numpy()  # (N, C)
+                        else:
+                            # Extract pooled features (default)
+                            vision_feat_tensor = self.vision_backbone(img_tensor)  # (1, feat_dim, ...) or (1, feat_dim)
+                            # Flatten to (feat_dim,) if needed
+                            if vision_feat_tensor.dim() > 2:
+                                vision_feat_tensor = torch.nn.functional.adaptive_avg_pool2d(vision_feat_tensor, (1, 1))
+                            vision_feat = vision_feat_tensor.squeeze().cpu().numpy()  # (feat_dim,)
                 else:
-                    vision_feat = np.zeros(self.vision_feat_dim, dtype=np.float32)
+                    # No image available - provide zeros
+                    if self.use_vision_tokens:
+                        # Default: 256 tokens of 384-d for dinov2_vits14
+                        vision_feat = np.zeros((256, 384), dtype=np.float32)
+                    else:
+                        vision_feat = np.zeros(self.vision_feat_dim, dtype=np.float32)
                 batch_vision_feats.append(vision_feat)
             else:
                 vision_feat = None
@@ -713,7 +740,7 @@ class PPO:
 
 			Parameters:
 				obs - the base state observation at the current timestep
-				vision_feat - the vision features (1280-d) for this timestep (optional)
+				vision_feat - the vision features (1280-d) or tokens (N, C) for this timestep (optional)
 
 			Return:
 				action - the action to take, as a numpy array
@@ -723,7 +750,12 @@ class PPO:
         # Query the actor network for a mean action
         if self.use_vision and vision_feat is not None:
             vision_feat_tensor = torch.tensor(vision_feat, dtype=torch.float).unsqueeze(0).to(device)
-            mean = self.actor(obs, vision_feat=vision_feat_tensor)
+            # vision_feat_tensor: (1, feat_dim) for pooled, or (1, N, C) for tokens
+            
+            if self.use_vision_tokens:
+                mean = self.actor(obs, vision_tokens=vision_feat_tensor)
+            else:
+                mean = self.actor(obs, vision_feat=vision_feat_tensor)
         else:
             mean = self.actor(obs)
 
@@ -751,17 +783,24 @@ class PPO:
 			Parameters:
 				batch_obs - the base state observations from batch. Shape: (timesteps, obs_dim)
 				batch_acts - the actions from batch. Shape: (timesteps, action_dim)
-				batch_vision_feats - the vision features (1280-d) from batch. Shape: (timesteps, 1280) or None
+				batch_vision_feats - the vision features or tokens from batch. 
+				                     Shape: (timesteps, feat_dim) or (timesteps, N, C)
 
 			Return:
 				V - the predicted values of batch_obs
 				log_probs - the log probabilities of the actions taken in batch_acts given batch_obs
 		"""
-        # Query critic network for values V (always pass vision_feat when use_vision=True)
-        self.V = self.critic(batch_obs, vision_feat=batch_vision_feats).squeeze()
+        # Query critic network for values V (handle both vision_feat and vision_tokens)
+        if self.use_vision_tokens and batch_vision_feats is not None:
+            self.V = self.critic(batch_obs, vision_tokens=batch_vision_feats).squeeze()
+        else:
+            self.V = self.critic(batch_obs, vision_feat=batch_vision_feats).squeeze()
 
         # Calculate log probabilities using most recent actor network
-        mean = self.actor(batch_obs, vision_feat=batch_vision_feats)
+        if self.use_vision_tokens and batch_vision_feats is not None:
+            mean = self.actor(batch_obs, vision_tokens=batch_vision_feats)
+        else:
+            mean = self.actor(batch_obs, vision_feat=batch_vision_feats)
             
         # Clamp without in-place operations
         mean_clamped = torch.stack([

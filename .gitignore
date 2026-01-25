@@ -127,3 +127,7 @@ project_ppo/src/_debug/
 project_ppo/src/analyze_learning.py
 project_ppo/src/visualize_results.py
 aws-robomaker-small-house-world/
+
+# find the runs_test and ignore it
+runs_test/
+

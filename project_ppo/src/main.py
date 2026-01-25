@@ -10,8 +10,8 @@ import platform
 
 from arguments import get_args
 from ppo import PPO
-from net_actor import NetActor
-from net_critic import NetCritic
+from net_actor import NetActor, ViTFiLMTokenLearnerActor, RecurrentViTFiLMTokenLearnerActor
+from net_critic import NetCritic, ViTFiLMTokenLearnerCritic, RecurrentViTFiLMTokenLearnerCritic
 from eval_policy import eval_policy
 import numpy as np
 
@@ -52,6 +52,25 @@ def visualize_sampler_mode(args):
     
     visualize_samples_in_gazebo(n_samples=n_samples, delay_sec=delay_sec)
 
+
+def get_architecture_classes(architecture_name):
+    """
+    Get actor and critic classes based on architecture name.
+    
+    Args:
+        architecture_name: One of ['default', 'vit_film_tokenlearner', 'recurrent_vit_film_tokenlearner']
+    
+    Returns:
+        (actor_class, critic_class)
+    """
+    if architecture_name == 'vit_film_tokenlearner':
+        return ViTFiLMTokenLearnerActor, ViTFiLMTokenLearnerCritic
+    elif architecture_name == 'recurrent_vit_film_tokenlearner':
+        return RecurrentViTFiLMTokenLearnerActor, RecurrentViTFiLMTokenLearnerCritic
+    elif architecture_name == 'default':
+        return NetActor, NetCritic
+    else:
+        raise ValueError(f"Unknown architecture: {architecture_name}")
 
 def save_run_metadata(run_dir, args, hyperparameters):
     """Save comprehensive run metadata for benchmarking and reproducibility"""
@@ -133,10 +152,25 @@ def train(env, hyperparameters, actor_model, critic_model, max_timesteps=5000, a
     
     # Get actual state_dim from environment (may include vision features)
     actual_state_dim = hyperparameters.pop('state_dim', state_dim)
+    
+    # Get architecture classes based on args
+    architecture_name = args.architecture if args is not None else 'default'
+    actor_class, critic_class = get_architecture_classes(architecture_name)
+    
+    # Pass architecture-specific hyperparameters if needed
+    arch_hyperparams = {}
+    if architecture_name in ['vit_film_tokenlearner', 'recurrent_vit_film_tokenlearner']:
+        arch_hyperparams['num_learned_tokens'] = args.num_learned_tokens if args else 8
+        arch_hyperparams['vision_emb_dim'] = args.vision_emb_dim if args else 128
+        if architecture_name == 'recurrent_vit_film_tokenlearner':
+            arch_hyperparams['gru_hidden_dim'] = args.gru_hidden_dim if args else 128
+    
+    print(f"[Architecture] Using: {architecture_name}", flush=True)
+    print(f"[Architecture] Actor: {actor_class.__name__}, Critic: {critic_class.__name__}", flush=True)
 
     # Create a model for PPO.
-    agent = PPO(policy_class=NetActor, value_func=NetCritic, env=env, state_dim=actual_state_dim, action_dim=action_dim,
-                **hyperparameters)
+    agent = PPO(policy_class=actor_class, value_func=critic_class, env=env, state_dim=actual_state_dim, action_dim=action_dim,
+                **hyperparameters, **arch_hyperparams)
     
     # Save run metadata for benchmarking
     if args is not None:
