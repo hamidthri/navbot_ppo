@@ -765,13 +765,24 @@ class PPO:
         dist = MultivariateNormal(mean, self.cov_mat)
 
         action = dist.sample()
-        # Clamp without in-place operations
+        
+        # Normalize shape: ensure action is (B, action_dim)
+        if action.dim() == 1:
+            action = action.unsqueeze(0)  # (action_dim,) -> (1, action_dim)
+        
+        # Clamp action dimensions
         action_clamped = torch.stack([
             torch.clamp(action[:, 0], 0, 1),
             torch.clamp(action[:, 1], -1, 1)
         ], dim=1)
+        
         log_prob = dist.log_prob(action_clamped)
-
+        
+        # Normalize shape: ensure log_prob is (B,)
+        if log_prob.dim() == 0:
+            log_prob = log_prob.unsqueeze(0)  # scalar -> (1,)
+        
+        # Return as numpy arrays with batch dim: action (1, 2), log_prob (1,)
         return action_clamped.detach().cpu().numpy()[0], log_prob.detach().cpu().numpy()[0]
 
     def evaluate(self, batch_obs, batch_acts, batch_vision_feats=None):
