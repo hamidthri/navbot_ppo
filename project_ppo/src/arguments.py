@@ -27,6 +27,8 @@ def get_args():
         parser.add_argument('--eval', dest='eval', action='store_true', default=False)     # evaluation mode flag
         parser.add_argument('--eval_episodes', dest='eval_episodes', type=int, default=100)  # number of episodes for evaluation
         parser.add_argument('--output_dir', dest='output_dir', type=str, default=None)     # base output directory for runs
+        parser.add_argument('--load_config', dest='load_config', type=str, default=None)   # load config from baseline run (path to config.yml)
+        parser.add_argument('--runs_root', dest='runs_root', type=str, default='runs')     # runs directory name (default: runs, test: runs_test)
         parser.add_argument('--timesteps_per_episode', dest='timesteps_per_episode', type=int, default=500)  # max timesteps per episode
         parser.add_argument('--max_timesteps', dest='max_timesteps', type=int, default=5000)  # total training timesteps
         parser.add_argument('--steps_per_iteration', dest='steps_per_iteration', type=int, default=5000)  # timesteps per PPO iteration (batch)
@@ -66,12 +68,35 @@ def get_args():
         
         args = parser.parse_args()
 
-        # Set default output_dir to repo_root/runs if not specified
+        # Load config from baseline if specified
+        if args.load_config:
+                import yaml
+                print(f"[arguments] Loading baseline config from: {args.load_config}", flush=True)
+                with open(args.load_config, 'r') as f:
+                        baseline_config = yaml.safe_load(f)
+                
+                # Override args with baseline config values
+                if 'vision_backbone' in baseline_config:
+                        args.vision_backbone = baseline_config['vision_backbone']
+                if 'use_map_sampler' in baseline_config:
+                        args.use_map_sampler = baseline_config['use_map_sampler']
+                if 'distance_uniform' in baseline_config:
+                        args.distance_uniform = baseline_config['distance_uniform']
+                if 'reward_version' in baseline_config:
+                        # Map reward_version back to reward_type if needed
+                        pass  # We'll handle this in environment
+                
+                print(f"[arguments] Baseline config applied:", flush=True)
+                print(f"  - vision_backbone: {args.vision_backbone}", flush=True)
+                print(f"  - use_map_sampler: {args.use_map_sampler}", flush=True)
+                print(f"  - distance_uniform: {args.distance_uniform}", flush=True)
+
+        # Set default output_dir to repo_root/<runs_root> if not specified
         if args.output_dir is None:
                 # Get repo root (3 levels up from src/ directory)
                 src_dir = os.path.dirname(os.path.abspath(__file__))
                 repo_root = os.path.abspath(os.path.join(src_dir, '...', '...', '...'))
-                args.output_dir = os.path.join(repo_root, 'runs')
+                args.output_dir = os.path.join(repo_root, args.runs_root)
         
         # Apply tiny_debug_run overrides
         if args.tiny_debug_run:

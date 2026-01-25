@@ -18,9 +18,9 @@ RUN apt-get update && apt-get install -y \
     libgazebo11-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python packages - use cu102 which works with system CUDA
+# Install Python packages - PyTorch 2.0.1 with CUDA 11.8 for RTX 4090 (sm_89) support
 RUN pip3 install --no-cache-dir \
-    torch==1.6.0 torchvision==0.7.0 && \
+    torch==2.0.1 torchvision==0.15.2 --index-url https://download.pytorch.org/whl/cu118 && \
     pip3 install --no-cache-dir \
     numpy==1.19.1 \
     scipy==1.5.2 \

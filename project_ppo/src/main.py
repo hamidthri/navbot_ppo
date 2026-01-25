@@ -4,6 +4,9 @@ from __future__ import print_function
 import gym
 import sys
 import torch
+import json
+import subprocess
+import platform
 
 from arguments import get_args
 from ppo import PPO
@@ -23,8 +26,68 @@ is_training = True
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+def save_run_metadata(run_dir, args, hyperparameters):
+    """Save comprehensive run metadata for benchmarking and reproducibility"""
+    metadata = {}
+    
+    # Run identification
+    metadata['run_name'] = args.run_name if args.run_name else args.method_name
+    metadata['timestamp'] = hyperparameters.get('method_name', 'unknown').split('_')[0] if '_' in hyperparameters.get('method_name', '') else 'unknown'
+    
+    # Git information
+    try:
+        git_commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], stderr=subprocess.DEVNULL).decode('utf-8').strip()
+        git_dirty = subprocess.call(['git', 'diff-index', '--quiet', 'HEAD'], stderr=subprocess.DEVNULL) != 0
+        metadata['git_commit'] = git_commit
+        metadata['git_dirty'] = git_dirty
+    except:
+        metadata['git_commit'] = 'unknown'
+        metadata['git_dirty'] = 'unknown'
+    
+    # Environment information
+    metadata['hostname'] = platform.node()
+    metadata['os'] = f"{platform.system()} {platform.release()}"
+    metadata['python_version'] = platform.python_version()
+    
+    # PyTorch information
+    metadata['torch_version'] = torch.__version__
+    metadata['torch_cuda_version'] = torch.version.cuda if torch.cuda.is_available() else 'N/A'
+    metadata['cuda_available'] = torch.cuda.is_available()
+    if torch.cuda.is_available():
+        metadata['gpu_name'] = torch.cuda.get_device_name(0)
+        metadata['gpu_capability'] = f"{torch.cuda.get_device_capability(0)[0]}.{torch.cuda.get_device_capability(0)[1]}"
+        metadata['cuda_arch_list'] = torch.cuda.get_arch_list()
+    
+    # Training configuration
+    metadata['vision_backbone'] = args.vision_backbone
+    metadata['vision_proj_dim'] = args.vision_proj_dim
+    metadata['use_map_sampler'] = args.use_map_sampler
+    metadata['distance_uniform'] = args.distance_uniform
+    metadata['reward_type'] = args.reward_type
+    metadata['timesteps_per_episode'] = args.timesteps_per_episode
+    metadata['max_timesteps'] = args.max_timesteps
+    metadata['steps_per_iteration'] = args.steps_per_iteration
+    metadata['save_every_iterations'] = args.save_every_iterations
+    
+    # Paths
+    metadata['run_dir'] = run_dir
+    metadata['checkpoint_dir'] = os.path.join(run_dir, 'checkpoints')
+    metadata['log_dir'] = os.path.join(run_dir, 'logs')
+    metadata['tensorboard_dir'] = os.path.join(run_dir, 'tb')
+    
+    # Save as JSON
+    meta_path = os.path.join(run_dir, 'run_meta.json')
+    with open(meta_path, 'w') as f:
+        json.dump(metadata, f, indent=2)
+    
+    print(f"[Metadata] Saved run metadata: {meta_path}", flush=True)
+    print(f"[Metadata] Git commit: {metadata['git_commit'][:8]}... (dirty: {metadata['git_dirty']})", flush=True)
+    print(f"[Metadata] GPU: {metadata.get('gpu_name', 'N/A')} (capability: {metadata.get('gpu_capability', 'N/A')})", flush=True)
+    return meta_path
 
-def train(env, hyperparameters, actor_model, critic_model, max_timesteps=5000):
+
+
+def train(env, hyperparameters, actor_model, critic_model, max_timesteps=5000, args=None):
     """
         Trains the model.
 
@@ -34,6 +97,7 @@ def train(env, hyperparameters, actor_model, critic_model, max_timesteps=5000):
             actor_model - the actor model to load in if we want to continue training
             critic_model - the critic model to load in if we want to continue training
             max_timesteps - maximum timesteps to train for
+            args - command line arguments for metadata saving
 
         Return:
             None
@@ -46,6 +110,11 @@ def train(env, hyperparameters, actor_model, critic_model, max_timesteps=5000):
     # Create a model for PPO.
     agent = PPO(policy_class=NetActor, value_func=NetCritic, env=env, state_dim=actual_state_dim, action_dim=action_dim,
                 **hyperparameters)
+    
+    # Save run metadata for benchmarking
+    if args is not None:
+        save_run_metadata(agent.method_run_dir, args, hyperparameters)
+    
     past_action = np.array([0., 0.])
 
     # Tries to load in an existing actor/critic model to continue training on
@@ -499,7 +568,7 @@ def main(args):
                  critic_model=args.critic_model, num_episodes=args.eval_episodes)
     elif args.mode == 'train':
         train(env=env, hyperparameters=hyperparameters, actor_model=args.actor_model,
-              critic_model=args.critic_model, max_timesteps=args.max_timesteps)
+              critic_model=args.critic_model, max_timesteps=args.max_timesteps, args=args)
         ### env.logger_global
     else:
         test(env=env, actor_model=args.actor_model)
