@@ -24,7 +24,7 @@ goal_model_dir = os.path.join(os.path.split(os.path.realpath(__file__))[0], '..'
 len_batch = 36  # 360 laser points / 36 = 10 picked laser features
 
 class Env():
-    def __init__(self, is_training, use_vision=False, vision_dim=64, use_map_sampler=False, debug_sampler=False, distance_uniform=False, reward_type='legacy'):
+    def __init__(self, is_training, use_vision=False, vision_dim=64, sampler_mode='legacy', debug_sampler=False, distance_uniform=False, reward_type='legacy'):
         self.position = Pose()
         self.goal_position = Pose()
         self.goal_position.position.x = 0.
@@ -61,14 +61,18 @@ class Env():
             from legacy_reward import LegacyReward
             self.reward_fn = LegacyReward()
         
-        # Map-based sampler setup (optional)
-        self.use_map_sampler = use_map_sampler
+        # Sampler setup
+        self.sampler_mode = sampler_mode
         self.debug_sampler = debug_sampler
         self.distance_uniform = distance_uniform
         self.map_sampler = None
+        self.rect_sampler = None
         self.gazebo_helpers = None
         
-        if self.use_map_sampler:
+        # Legacy compatibility: map 'legacy' sampler_mode to random sampling
+        self.use_map_sampler = (sampler_mode == 'map')
+        
+        if sampler_mode == 'map':
             from map_goal_sampler import MapGoalSampler
             import gazebo_reset_helpers
             import os
@@ -90,6 +94,18 @@ class Env():
             self.gazebo_helpers = gazebo_reset_helpers
             mode_str = "distance-uniform" if distance_uniform else "spatial-uniform"
             print(f"[Env] Map-based sampler enabled ({mode_str}, clearance: start=0.50m, goal=0.30m, dist=2.5-8.0m)", flush=True)
+        
+        elif sampler_mode == 'rect_regions':
+            from rect_region_sampler import RectRegionSampler
+            import gazebo_reset_helpers
+            
+            self.rect_sampler = RectRegionSampler(
+                robot_radius=0.105,
+                clearance_margin=0.30,
+                max_tries=100
+            )
+            self.gazebo_helpers = gazebo_reset_helpers
+            print(f"[Env] Rectangle region sampler enabled (13 regions, start != goal)", flush=True)
         
         # Vision setup
         self.use_vision = use_vision
@@ -509,6 +525,79 @@ class Env():
             
             # Build final state
             state = [i / 3.5 for i in state]
+        
+        # Rectangle region sampler: sample from predefined regions with start != goal
+        elif self.sampler_mode == 'rect_regions' and self.rect_sampler is not None:
+            import math
+            
+            # Sample start/goal from different regions
+            result = self.rect_sampler.sample_start_goal()
+            
+            if result is None:
+                print("[RESET ERROR] rect_sampler failed to generate valid start/goal pair", flush=True)
+                # Fallback to default random sampling
+                rospy.wait_for_service('/gazebo/reset_world')
+                try:
+                    self.reset_world()
+                except (rospy.ServiceException) as e:
+                    pass
+                
+                self.goal_position.position.x = random.uniform(-3.6, 3.6)
+                self.goal_position.position.y = random.uniform(-3.6, 3.6)
+                self.goal_position.position.z = 0.01
+            else:
+                (sx, sy, syaw), (gx, gy), s_region_id, g_region_id = result
+                
+                if self.debug_sampler:
+                    print(f"[RESET] start=R{s_region_id}({sx:.2f}, {sy:.2f}, {math.degrees(syaw):.1f}°) goal=R{g_region_id}({gx:.2f}, {gy:.2f})", flush=True)
+                
+                # Set robot pose using gazebo_reset_helpers
+                success = self.gazebo_helpers.set_robot_pose('turtlebot3_burger', sx, sy, syaw, z=0.07)
+                if not success:
+                    print("[RESET WARNING] set_robot_pose returned False", flush=True)
+                
+                # Set goal position
+                self.goal_position.position.x = gx
+                self.goal_position.position.y = gy
+                self.goal_position.position.z = 0.01
+            
+            # Spawn goal marker
+            rospy.wait_for_service('/gazebo/spawn_sdf_model')
+            try:
+                goal_urdf = open(goal_model_dir, "r").read()
+                target = SpawnModel
+                target.model_name = 'target'
+                target.model_xml = goal_urdf
+                self.goal(target.model_name, target.model_xml, 'namespace', self.goal_position, 'world')
+            except (rospy.ServiceException) as e:
+                print(f"[RESET WARNING] Failed to spawn goal marker: {e}", flush=True)
+                pass
+            
+            # Wait for laser data after teleport
+            rospy.sleep(0.1)
+            data = None
+            for _ in range(10):
+                data = rospy.wait_for_message('scan', LaserScan, timeout=2)
+                if data and len(data.ranges) > 0:
+                    break
+                rospy.sleep(0.05)
+            
+            if data is None:
+                print("[RESET ERROR] Failed to get valid laser scan after rect-region reset", flush=True)
+                state = [0.0] * 16
+            else:
+                # Calculate distances and angles
+                self.goal_distance = self.getGoalDistace()
+                
+                # Initialize reward function
+                if self.reward_type == 'fuzzy':
+                    self.reward_fn.reset(self.goal_distance, self.yaw, self.rel_theta)
+                else:
+                    self.reward_fn.reset(self.goal_distance)
+                
+                # Build state
+                state, rel_dis, yaw, rel_theta, diff_angle, done, arrive = self.getState(data)
+                state = [i / 3.5 for i in state]
             
         else:
             # Default behavior: reset world (resets robot pose and physics)

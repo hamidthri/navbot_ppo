@@ -41,13 +41,18 @@ def get_args():
                             help='Vision backbone architecture')
         parser.add_argument('--vision_proj_dim', dest='vision_proj_dim', type=int, default=64, help='Vision projection dimension')
         
-        # NEW: External sampler flag
-        parser.add_argument('--use_external_sampler', dest='use_external_sampler', action='store_true', default=False,
-                            help='Use external spawn_goal_sampler for open-space start/goal (default: OFF)')
+        # NEW: Sampler mode selection
+        parser.add_argument('--sampler_mode', dest='sampler_mode', type=str, default='map',
+                            choices=['map', 'rect_regions', 'external'],
+                            help='Sampler mode: map (distance transform), rect_regions (13 rectangles), external (spawn_goal_sampler)')
         
-        # NEW: Map-based sampler flag (with distance transform)
+        # NEW: External sampler flag (deprecated, use --sampler_mode external)
+        parser.add_argument('--use_external_sampler', dest='use_external_sampler', action='store_true', default=False,
+                            help='DEPRECATED: Use --sampler_mode external instead')
+        
+        # NEW: Map-based sampler flag (deprecated, use --sampler_mode map)
         parser.add_argument('--use_map_sampler', dest='use_map_sampler', action='store_true', default=False,
-                            help='Use map-based sampler with distance transform for collision-free start/goal (default: OFF)')
+                            help='DEPRECATED: Use --sampler_mode map instead')
         
         # NEW: Debug sampler flag (for noisy reset logs)
         parser.add_argument('--debug_sampler', dest='debug_sampler', action='store_true', default=False,
@@ -56,6 +61,12 @@ def get_args():
         # NEW: Distance-uniform sampling flag
         parser.add_argument('--distance_uniform', dest='distance_uniform', action='store_true', default=False,
                             help='Use distance-uniform goal sampling (sample distance bin first, then goal from bin) instead of spatial-uniform (default: OFF)')
+        
+        # NEW: Visualize sampler mode
+        parser.add_argument('--visualize_sampler', dest='visualize_sampler', type=int, default=0,
+                            help='Visualize sampler in Gazebo (cycles through N samples). Use with --viz_delay_sec. Set to 0 to disable (default: 0)')
+        parser.add_argument('--viz_delay_sec', dest='viz_delay_sec', type=float, default=2.0,
+                            help='Delay between visualization samples in seconds (default: 2.0)')
         
         # NEW: Tiny debug run flag
         parser.add_argument('--tiny_debug_run', dest='tiny_debug_run', action='store_true', default=False,

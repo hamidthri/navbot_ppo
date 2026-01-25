@@ -26,6 +26,33 @@ is_training = True
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+
+def visualize_sampler_mode(args):
+    """
+    Visualize sampler by cycling through samples in Gazebo.
+    Keeps Gazebo running, does not start training.
+    """
+    from rect_region_sampler import visualize_samples_in_gazebo
+    
+    n_samples = args.visualize_sampler
+    delay_sec = args.viz_delay_sec
+    
+    print(f"\n{'='*70}")
+    print(f"VISUALIZE SAMPLER MODE")
+    print(f"{'='*70}")
+    print(f"Sampler mode: {args.sampler_mode}")
+    print(f"Samples: {n_samples}")
+    print(f"Delay: {delay_sec}s")
+    print(f"{'='*70}\n")
+    
+    if args.sampler_mode != 'rect_regions':
+        print(f"ERROR: --visualize_sampler only works with --sampler_mode rect_regions")
+        print(f"Current sampler_mode: {args.sampler_mode}")
+        sys.exit(1)
+    
+    visualize_samples_in_gazebo(n_samples=n_samples, delay_sec=delay_sec)
+
+
 def save_run_metadata(run_dir, args, hyperparameters):
     """Save comprehensive run metadata for benchmarking and reproducibility"""
     metadata = {}
@@ -508,8 +535,20 @@ def main(args):
     if use_vision:
         print(f"[main] Vision mode enabled for method: {args.method_name}", flush=True)
     
+    # Determine sampler mode (support both new and legacy flags)
+    sampler_mode = args.sampler_mode
+    if args.use_map_sampler and sampler_mode == 'map':
+        # Already correct
+        pass
+    elif args.use_map_sampler and sampler_mode != 'map':
+        # Legacy flag override
+        sampler_mode = 'map'
+    elif args.use_external_sampler and sampler_mode != 'external':
+        # Legacy flag override
+        sampler_mode = 'external'
+    
     env = Env(is_training, use_vision=use_vision, vision_dim=vision_dim, 
-              use_map_sampler=args.use_map_sampler, debug_sampler=args.debug_sampler,
+              sampler_mode=sampler_mode, debug_sampler=args.debug_sampler,
               distance_uniform=args.distance_uniform, reward_type=args.reward_type)
     
     # State dimension is ONLY base state (LiDAR + pose + past actions)
@@ -566,6 +605,9 @@ def main(args):
         # Evaluation mode
         evaluate(env=env, hyperparameters=hyperparameters, actor_model=args.actor_model, 
                  critic_model=args.critic_model, num_episodes=args.eval_episodes)
+    elif args.visualize_sampler > 0:
+        # Sampler visualization mode (no training)
+        visualize_sampler_mode(args)
     elif args.mode == 'train':
         train(env=env, hyperparameters=hyperparameters, actor_model=args.actor_model,
               critic_model=args.critic_model, max_timesteps=args.max_timesteps, args=args)
