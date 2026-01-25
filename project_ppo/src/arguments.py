@@ -117,7 +117,7 @@ def get_args():
         if args.output_dir is None:
                 # Get repo root (3 levels up from src/ directory)
                 src_dir = os.path.dirname(os.path.abspath(__file__))
-                repo_root = os.path.abspath(os.path.join(src_dir, '...', '...', '...'))
+                repo_root = os.path.abspath(os.path.join(src_dir, '..', '..', '..'))
                 args.output_dir = os.path.join(repo_root, args.runs_root)
         
         # Apply tiny_debug_run overrides
