@@ -550,23 +550,20 @@ def dry_run_vision_pipeline(args):
     print()
 
 def main(args):
-    # Check for dry-run mode BEFORE initializing ROS
-    if args.dry_run_vision:
-        dry_run_vision_pipeline(args)
-        return
-    
     import rospy
     rospy.init_node('ppo_stage_1')
     
     # Import Env after rospy is initialized
     from environment_new import Env
     
-    # Setup vision mode based on method_name
-    use_vision = 'vision' in args.method_name.lower()
-    vision_dim = 64  # Default vision feature dimension
+    # Setup vision mode based on vision_backbone argument
+    use_vision = args.vision_backbone is not None and args.vision_backbone != 'none'
+    vision_dim = args.vision_proj_dim if hasattr(args, 'vision_proj_dim') else 64
     
     if use_vision:
-        print(f"[main] Vision mode enabled for method: {args.method_name}", flush=True)
+        print(f"[main] Vision mode enabled: backbone={args.vision_backbone}, proj_dim={vision_dim}", flush=True)
+    else:
+        print(f"[main] Vision mode DISABLED (no backbone specified)", flush=True)
     
     # Determine sampler mode (support both new and legacy flags)
     sampler_mode = args.sampler_mode

@@ -34,7 +34,6 @@ def get_args():
         parser.add_argument('--steps_per_iteration', dest='steps_per_iteration', type=int, default=5000)  # timesteps per PPO iteration (batch)
         parser.add_argument('--save_every_iterations', dest='save_every_iterations', type=int, default=2)  # save checkpoint every N iterations
         parser.add_argument('--resume', dest='resume', action='store_true', default=False)  # resume from existing checkpoint
-        parser.add_argument('--dry_run_vision', dest='dry_run_vision', action='store_true', default=False)  # dry-run mode without Gazebo
         parser.add_argument('--vision_backbone', dest='vision_backbone', type=str, default='resnet18',
                             choices=['mobilenet_v2', 'resnet18', 'resnet34', 'resnet50', 'clip_vit_b32', 
                                      'dinov2_vits14', 'dinov2_vitb14', 'dinov2_vitl14', 'dinov2_vitg14'],
@@ -79,9 +78,9 @@ def get_args():
         parser.add_argument('--viz_delay_sec', dest='viz_delay_sec', type=float, default=2.0,
                             help='Delay between visualization samples in seconds (default: 2.0)')
         
-        # NEW: Tiny debug run flag
+        # Tiny debug run flag (reduces timesteps only, does NOT bypass vision/ROS)
         parser.add_argument('--tiny_debug_run', dest='tiny_debug_run', action='store_true', default=False,
-                            help='Fast debug mode: episode_max_steps=20, steps_per_iter=40, max_timesteps=400')
+                            help='Fast debug mode: reduces timesteps to episode_max_steps=20, steps_per_iter=40, max_timesteps=400')
         
         # Reward type selection
         parser.add_argument('--reward_type', dest='reward_type', type=str, default='legacy',

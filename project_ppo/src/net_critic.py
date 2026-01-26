@@ -10,8 +10,12 @@ import numpy as np
 import math
 from vision_backbones import ProjectionMLP
 
-# Import fusion modules from net_actor
-from net_actor import ViTFiLMTokenLearnerFusion
+# Import fusion modules from fusion_modules
+from fusion_modules import (
+    ViTFiLMTokenLearnerFusion,
+    PooledFiLMFusion,
+    get_fused_dim
+)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 class ResBlock(nn.Module):
@@ -67,14 +71,18 @@ class NetCritic(nn.Module):
         self.vision_proj_dim = vision_proj_dim
         self.base_state_dim = in_dim
         
-        # Trainable vision projection head (vision_feat_dim -> vision_proj_dim)
+        # Use PooledFiLMFusion for vision integration (replaces raw concat)
         if self.use_vision:
-            self.vision_proj = ProjectionMLP(vision_feat_dim, vision_proj_dim, dropout=0.1)
-            residual_input_dim = self.base_state_dim + vision_proj_dim
-            print(f"[NetCritic] Vision mode: base_state={self.base_state_dim}, "
-                  f"vision_proj={vision_proj_dim}, fused={residual_input_dim}", flush=True)
+            self.fusion = PooledFiLMFusion(
+                base_state_dim=in_dim,
+                vision_feat_dim=vision_feat_dim,
+                vision_emb_dim=vision_proj_dim
+            )
+            residual_input_dim = get_fused_dim(self.base_state_dim, vision_proj_dim)
+            print(f"[NetCritic] PooledFiLMFusion mode: base_state={self.base_state_dim}, "
+                  f"vision_emb={vision_proj_dim}, fused={residual_input_dim}", flush=True)
         else:
-            self.vision_proj = None
+            self.fusion = None
             residual_input_dim = in_dim
 
         # Existing residual MLP head - use fused dimension
@@ -86,11 +94,11 @@ class NetCritic(nn.Module):
 
     def forward(self, obs, vision_feat=None):
         """
-        Forward pass with optional vision features.
+        Forward pass with FiLM-based fusion (replaces raw concat).
         
         Args:
             obs: Base state vector (B, base_state_dim) or (base_state_dim,)
-            vision_feat: Vision features (B, 1280) or (1280,) from frozen backbone (optional)
+            vision_feat: Pooled vision features (B, vision_feat_dim) from frozen backbone (optional)
         
         Returns:
             value: (B, out_dim)
@@ -104,7 +112,7 @@ class NetCritic(nn.Module):
         if needs_unsqueeze:
             obs = obs.unsqueeze(0)
         
-        # Fuse vision features if provided
+        # Fuse vision features via PooledFiLMFusion if provided
         if self.use_vision:
             if vision_feat is None:
                 # Fallback: use zeros if no vision features provided
@@ -118,11 +126,8 @@ class NetCritic(nn.Module):
                 if vision_feat.dim() == 1:
                     vision_feat = vision_feat.unsqueeze(0)
             
-            # Project vision features (trainable)
-            vision_proj = self.vision_proj(vision_feat)
-            
-            # Concatenate base state + projected vision
-            X0 = torch.cat([obs, vision_proj], dim=-1)
+            # FiLM-based fusion (replaces raw concat)
+            X0 = self.fusion(vision_feat, obs)
         else:
             X0 = obs
 

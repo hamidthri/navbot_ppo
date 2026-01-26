@@ -40,6 +40,7 @@ RUNS_ROOT="${RUNS_ROOT:-runs}"
 USE_VISION="${USE_VISION:-false}"
 VISION_MODEL="${VISION_MODEL:-resnet18}"
 VISION_DIM="${VISION_DIM:-512}"
+ARCHITECTURE="${ARCHITECTURE:-default}"
 SAVE_EVERY_ITERATIONS="${SAVE_EVERY_ITERATIONS:-2}"
 
 # Gazebo/ROS management parameters
@@ -97,12 +98,16 @@ while [[ $# -gt 0 ]]; do
             USE_VISION="$2"
             shift 2
             ;;
-        --vision_model)
+        --vision_model|--vision_backbone)
             VISION_MODEL="$2"
             shift 2
             ;;
-        --vision_dim)
+        --vision_dim|--vision_proj_dim)
             VISION_DIM="$2"
+            shift 2
+            ;;
+        --architecture)
+            ARCHITECTURE="$2"
             shift 2
             ;;
         --with_gazebo)
@@ -330,6 +335,70 @@ if [[ "${WITH_GAZEBO}" == "true" ]]; then
 fi
 
 # ============================================================================
+# Camera Readiness Check (if vision training)
+# ============================================================================
+
+if [[ "${USE_VISION,,}" == "true" ]]; then
+    echo ""
+    echo "================================================================================"
+    echo "Camera Readiness Check (Vision Training Required)"
+    echo "================================================================================"
+    echo "Vision Enabled:       YES"
+    echo "Expected Topic:       /robot_camera/image_raw"
+    echo ""
+    
+    echo "[1/3] Checking if camera topic exists..."
+    CAMERA_TOPIC_EXISTS=$(docker exec navbot-ppo bash -lc "source /opt/ros/noetic/setup.bash && timeout 5 rostopic list 2>/dev/null | grep -c '/robot_camera/image_raw' || echo 0")
+    
+    if [[ "${CAMERA_TOPIC_EXISTS}" -gt 0 ]]; then
+        echo "  ✓ Camera topic /robot_camera/image_raw exists"
+    else
+        echo "  ✗ ERROR: Camera topic /robot_camera/image_raw not found"
+        echo ""
+        echo "Available topics:"
+        docker exec navbot-ppo bash -lc "source /opt/ros/noetic/setup.bash && rostopic list 2>/dev/null | head -20 || echo 'Failed to list topics'"
+        echo ""
+        echo "ERROR: Vision training requires camera topic /robot_camera/image_raw"
+        echo "       Ensure Gazebo is running with robot camera sensor enabled."
+        exit 1
+    fi
+    
+    echo "[2/3] Checking camera publish frequency..."
+    CAMERA_HZ=$(docker exec navbot-ppo bash -lc "source /opt/ros/noetic/setup.bash && timeout 3 rostopic hz /robot_camera/image_raw 2>&1 | grep 'average rate' | awk '{print \$3}' || echo '0'")
+    
+    if [[ -z "${CAMERA_HZ}" ]] || [[ "${CAMERA_HZ}" == "0" ]]; then
+        echo "  ⚠ WARNING: Could not determine camera frequency (may still work if camera is slow)"
+    else
+        echo "  ✓ Camera publishing at ~${CAMERA_HZ} Hz"
+    fi
+    
+    echo "[3/3] Verifying camera frames are being received..."
+    CAMERA_FRAME_CHECK=$(docker exec navbot-ppo bash -lc "source /opt/ros/noetic/setup.bash && timeout 5 rostopic echo -n1 /robot_camera/image_raw/header/seq 2>/dev/null || echo 'FAIL'")
+    
+    if [[ "${CAMERA_FRAME_CHECK}" != "FAIL" ]] && [[ -n "${CAMERA_FRAME_CHECK}" ]]; then
+        echo "  ✓ Camera frames confirmed (sequence: ${CAMERA_FRAME_CHECK})"
+    else
+        echo "  ✗ ERROR: No camera frames received within timeout"
+        echo ""
+        echo "Diagnostics:"
+        echo "--- Camera info topic ---"
+        docker exec navbot-ppo bash -lc "source /opt/ros/noetic/setup.bash && timeout 2 rostopic info /robot_camera/image_raw 2>/dev/null || echo 'Topic info unavailable'"
+        echo "--- Gazebo processes ---"
+        docker exec navbot-ppo bash -c "ps aux | grep -E 'gzserver|gzclient' | grep -v grep || echo 'No Gazebo processes'"
+        echo ""
+        echo "ERROR: Vision training requires active camera stream."
+        echo "       Camera topic exists but no frames are being published."
+        exit 1
+    fi
+    
+    echo ""
+    echo "================================================================================"
+    echo "✓ Camera Ready for Vision Training"
+    echo "================================================================================"
+    sleep 1
+fi
+
+# ============================================================================
 # Build Training Command
 # ============================================================================
 
@@ -352,7 +421,7 @@ fi
 
 # Add vision flags if enabled
 if [[ "${USE_VISION,,}" == "true" ]]; then
-    PYTHON_CMD="${PYTHON_CMD} --use_vision --vision_model ${VISION_MODEL} --vision_dim ${VISION_DIM}"
+    PYTHON_CMD="${PYTHON_CMD} --vision_backbone ${VISION_MODEL} --vision_proj_dim ${VISION_DIM} --architecture ${ARCHITECTURE}"
 fi
 
 # ============================================================================

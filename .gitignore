@@ -142,4 +142,13 @@ fuzzy3_viz/
 *.pt
 fixed_case.json
 fuzzy3_test_report.json
+*.tfevents*
+HOST_MOUNT_TEST.txt
+
+# Temporary debug reports (keep only final docs)
+*REPORT*.md
+*SMOKE*.md
+*TEST*.md
+*FIX*.md
+!REAL_CAMERA_VISION_REPORT.md
 

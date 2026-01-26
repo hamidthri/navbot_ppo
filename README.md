@@ -6,6 +6,15 @@ The goal is to use deep reinforcement learning algorithms, specifically Proximal
 
 ---
 
+```bash
+cd /is/ps2/otaheri/hamid/navbot_ppo/project_ppo/scripts && ./train_hub.sh --gazebo_gui --method_name fusion_smoke_resnet_gui --max_timesteps 600 --timesteps_per_episode 60 --steps_per_iteration 120 --reward_type fuzzy3 --sampler_mode rect_regions --distance_uniform --use_vision true --vision_backbone resnet18 --vision_proj_dim 64 2>&1 > /tmp/fusion_resnet_run2.log &
+```
+
+```bash
+cd /is/ps2/otaheri/hamid/navbot_ppo/project_ppo/scripts && ./train_hub.sh --gazebo_gui --method_name fusion_smoke_dinov2_gui --max_timesteps 300 --timesteps_per_episode 50 --steps_per_iteration 100 --reward_type fuzzy3 --sampler_mode rect_regions --distance_uniform --use_vision true --vision_backbone dinov2_vits14 --vision_proj_dim 128 --architecture vit_film_tokenlearner 2>&1 > /tmp/fusion_dinov2_token.log &
+
+```
+
 ## 🐳 **Running on Ubuntu 24.04? Use Docker!**
 
 ROS1 cannot be installed natively on Ubuntu 24.04. We provide a complete **Docker setup with browser-accessible Gazebo GUI**.

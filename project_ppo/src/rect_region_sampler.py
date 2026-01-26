@@ -65,14 +65,14 @@ class RectRegionSampler:
         self.max_goal_dist = max_goal_dist if max_goal_dist is not None else 10.0
         
         if distance_bins is None:
-            # Closer goals, more accessible training scenarios
-            self.distance_bins = [(1.5, 4.5), (4.5, 7.5), (7.5, 10.0)]
+            # Closer goals, more accessible training scenarios (4 bins)
+            self.distance_bins = [(1.5, 3.5), (3.5, 5.5), (5.5, 7.5), (7.5, 10.0)]
         else:
             self.distance_bins = distance_bins
             
         if bin_probs is None:
-            # Favor closer goals: 75% close, 20% medium, 5% far
-            self.bin_probs = [0.75, 0.20, 0.05]
+            # Favor closer goals: 60% close, 20% near-mid, 15% mid, 5% far
+            self.bin_probs = [0.60, 0.20, 0.15, 0.05]
         else:
             self.bin_probs = bin_probs
             

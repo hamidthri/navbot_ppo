@@ -9,173 +9,21 @@ import torch.nn.functional as F
 import numpy as np
 import math
 from vision_backbones import ProjectionMLP
+from fusion_modules import (
+    TokenLearner,
+    FiLMLayer,
+    ViTFiLMTokenLearnerFusion,
+    PooledFiLMFusion,
+    get_fused_dim
+)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 # ============================================================================
-# TokenLearner + FiLM Fusion Modules
+# Fusion modules moved to fusion_modules.py
+# Imports above provide: TokenLearner, FiLMLayer, ViTFiLMTokenLearnerFusion, PooledFiLMFusion
 # ============================================================================
-
-class TokenLearner(nn.Module):
-    """
-    TokenLearner: Reduce N tokens to K learned tokens via weighted attention.
-    Paper: https://arxiv.org/abs/2106.11297
-    
-    Simple, cheap implementation:
-    - MLP over token channels produces K attention maps
-    - Softmax over N (spatial) dimension
-    - Weighted sum of original tokens
-    """
-    def __init__(self, token_dim: int, num_tokens: int = 8):
-        super().__init__()
-        self.num_tokens = num_tokens
-        # MLP: C -> K attention logits per token
-        self.attention_mlp = nn.Sequential(
-            nn.LayerNorm(token_dim),
-            nn.Linear(token_dim, num_tokens),
-        )
-    
-    def forward(self, tokens: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            tokens: (B, N, C) input tokens
-        Returns:
-            learned_tokens: (B, K, C) reduced tokens
-        """
-        B, N, C = tokens.shape
-        
-        # Compute attention scores: (B, N, C) -> (B, N, K)
-        attn_logits = self.attention_mlp(tokens)  # (B, N, K)
-        
-        # Softmax over N (spatial dimension) for each of K tokens
-        attn_weights = F.softmax(attn_logits, dim=1)  # (B, N, K)
-        
-        # Weighted sum: (B, N, K)^T @ (B, N, C) -> (B, K, C)
-        learned_tokens = torch.einsum('bnk,bnc->bkc', attn_weights, tokens)
-        
-        return learned_tokens
-
-
-class FiLMLayer(nn.Module):
-    """
-    Feature-wise Linear Modulation (FiLM) conditioned on base state.
-    
-    base_state -> MLP -> (γ, β)
-    tokens_out = γ * tokens + β
-    
-    Uses stable initialization: γ starts near 1, β near 0
-    """
-    def __init__(self, base_state_dim: int, token_dim: int):
-        super().__init__()
-        hidden_dim = max(64, base_state_dim * 2)
-        
-        # MLP: base_state -> (gamma, beta)
-        self.film_mlp = nn.Sequential(
-            nn.LayerNorm(base_state_dim),
-            nn.Linear(base_state_dim, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, token_dim * 2),  # γ and β
-        )
-        
-        # Initialize to near-identity: γ ≈ 1, β ≈ 0
-        # Last layer outputs Δγ and β, then γ = 1 + Δγ
-        nn.init.zeros_(self.film_mlp[-1].weight)
-        nn.init.zeros_(self.film_mlp[-1].bias)
-    
-    def forward(self, tokens: torch.Tensor, base_state: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            tokens: (B, K, C) tokens to modulate
-            base_state: (B, base_state_dim) conditioning vector
-        Returns:
-            modulated_tokens: (B, K, C)
-        """
-        B, K, C = tokens.shape
-        
-        # Generate γ and β
-        film_params = self.film_mlp(base_state)  # (B, 2*C)
-        delta_gamma, beta = torch.split(film_params, C, dim=-1)  # (B, C), (B, C)
-        
-        # γ = 1 + Δγ for stability
-        gamma = 1.0 + delta_gamma
-        
-        # Broadcast and apply: γ * tokens + β
-        # gamma, beta: (B, C) -> (B, 1, C) for broadcasting
-        gamma = gamma.unsqueeze(1)  # (B, 1, C)
-        beta = beta.unsqueeze(1)    # (B, 1, C)
-        
-        modulated_tokens = gamma * tokens + beta
-        
-        return modulated_tokens
-
-
-class ViTFiLMTokenLearnerFusion(nn.Module):
-    """
-    Complete fusion module: TokenLearner + FiLM + Readout
-    
-    Pipeline:
-    1. Extract tokens from vision backbone (B, N, C)
-    2. TokenLearner: (B, N, C) -> (B, K, C)
-    3. FiLM: condition tokens on base_state
-    4. Readout: flatten + MLP -> (B, vision_emb_dim)
-    5. Fuse: concat(base_state_norm, vision_emb) -> (B, base_dim + vision_emb_dim)
-    """
-    def __init__(self, 
-                 base_state_dim: int,
-                 token_dim: int,  # C (e.g., 384 for dinov2_vits14)
-                 num_learned_tokens: int = 8,  # K
-                 vision_emb_dim: int = 128):
-        super().__init__()
-        self.base_state_dim = base_state_dim
-        self.token_dim = token_dim
-        self.num_learned_tokens = num_learned_tokens
-        self.vision_emb_dim = vision_emb_dim
-        
-        # TokenLearner
-        self.token_learner = TokenLearner(token_dim, num_learned_tokens)
-        
-        # FiLM
-        self.film = FiLMLayer(base_state_dim, token_dim)
-        
-        # Readout MLP: (K * C) -> vision_emb_dim
-        readout_input_dim = num_learned_tokens * token_dim
-        self.readout = nn.Sequential(
-            nn.LayerNorm(readout_input_dim),
-            nn.Linear(readout_input_dim, vision_emb_dim * 2),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(vision_emb_dim * 2, vision_emb_dim),
-            nn.LayerNorm(vision_emb_dim),
-        )
-        
-        # Base state normalization
-        self.base_norm = nn.LayerNorm(base_state_dim)
-    
-    def forward(self, tokens: torch.Tensor, base_state: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            tokens: (B, N, C) from vision backbone
-            base_state: (B, base_state_dim)
-        Returns:
-            fused: (B, base_state_dim + vision_emb_dim)
-        """
-        # 1. TokenLearner: (B, N, C) -> (B, K, C)
-        learned_tokens = self.token_learner(tokens)
-        
-        # 2. FiLM: condition on base_state
-        modulated_tokens = self.film(learned_tokens, base_state)
-        
-        # 3. Readout: flatten + MLP
-        B, K, C = modulated_tokens.shape
-        flat_tokens = modulated_tokens.reshape(B, K * C)
-        vision_emb = self.readout(flat_tokens)  # (B, vision_emb_dim)
-        
-        # 4. Fuse with normalized base state
-        base_norm = self.base_norm(base_state)
-        fused = torch.cat([base_norm, vision_emb], dim=-1)
-        
-        return fused
 
 
 
@@ -235,15 +83,19 @@ class NetActor(nn.Module):
         self.vision_proj_dim = vision_proj_dim
         self.base_state_dim = in_dim  # Base state (LiDAR + pose + past actions)
         
-        # Trainable vision projection head (vision_feat_dim -> vision_proj_dim)
+        # Use PooledFiLMFusion for vision integration (replaces raw concat)
         if self.use_vision:
-            self.vision_proj = ProjectionMLP(vision_feat_dim, vision_proj_dim, dropout=0.1)
-            # Fused input: base_state + projected_vision
-            residual_input_dim = self.base_state_dim + vision_proj_dim
-            print(f"[NetActor] Vision mode: base_state={self.base_state_dim}, "
-                  f"vision_proj={vision_proj_dim}, fused={residual_input_dim}", flush=True)
+            self.fusion = PooledFiLMFusion(
+                base_state_dim=in_dim,
+                vision_feat_dim=vision_feat_dim,
+                vision_emb_dim=vision_proj_dim
+            )
+            # Fused dimension: base_state + vision_emb
+            residual_input_dim = get_fused_dim(self.base_state_dim, vision_proj_dim)
+            print(f"[NetActor] PooledFiLMFusion mode: base_state={self.base_state_dim}, "
+                  f"vision_emb={vision_proj_dim}, fused={residual_input_dim}", flush=True)
         else:
-            self.vision_proj = None
+            self.fusion = None
             residual_input_dim = in_dim
 
         # Existing residual MLP head - use fused dimension
@@ -259,11 +111,11 @@ class NetActor(nn.Module):
 
     def forward(self, obs, vision_feat=None):
         """
-        Forward pass with optional vision features.
+        Forward pass with FiLM-based fusion (replaces raw concat).
         
         Args:
             obs: Base state vector (B, base_state_dim) or (base_state_dim,)
-            vision_feat: Vision features (B, 1280) or (1280,) from frozen backbone (optional)
+            vision_feat: Pooled vision features (B, vision_feat_dim) from frozen backbone (optional)
         
         Returns:
             actions: (B, out_dim)
@@ -277,7 +129,7 @@ class NetActor(nn.Module):
         if needs_unsqueeze:
             obs = obs.unsqueeze(0)
         
-        # Fuse vision features if provided
+        # Fuse vision features via PooledFiLMFusion if provided
         if self.use_vision:
             if vision_feat is None:
                 # Fallback: use zeros if no vision features provided
@@ -291,11 +143,8 @@ class NetActor(nn.Module):
                 if vision_feat.dim() == 1:
                     vision_feat = vision_feat.unsqueeze(0)
             
-            # Project vision features (trainable)
-            vision_proj = self.vision_proj(vision_feat)
-            
-            # Concatenate base state + projected vision
-            X0 = torch.cat([obs, vision_proj], dim=-1)
+            # FiLM-based fusion (replaces raw concat)
+            X0 = self.fusion(vision_feat, obs)
         else:
             X0 = obs
 

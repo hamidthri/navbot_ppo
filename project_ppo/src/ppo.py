@@ -119,6 +119,18 @@ class PPO:
         self.actor = policy_class(self.obs_dim, self.act_dim, **actor_kwargs).to(device)
         self.critic = value_func(self.obs_dim, 1, **critic_kwargs).to(device)
         
+        # ============================================================================
+        # FUSION PROOF LOG (one-time init only)
+        # ============================================================================
+        fusion_info = self._get_fusion_info()
+        fusion_log_path = os.path.join(self.log_dir_path, 'fusion_info.txt')
+        with open(fusion_log_path, 'w') as f:
+            for line in fusion_info:
+                print(f"[FUSION] {line}", flush=True)
+                f.write(line + '\n')
+        print(f"[FUSION] Info saved to: {fusion_log_path}", flush=True)
+        # ============================================================================
+        
         # Check if actor needs vision tokens (for FiLM+TokenLearner architectures)
         self.use_vision_tokens = hasattr(self.actor, 'forward') and 'vision_tokens' in self.actor.forward.__code__.co_varnames
 
@@ -563,31 +575,44 @@ class PPO:
             # Extract vision features ONCE (frozen backbone, no grad)
             if self.use_vision:
                 img = self.env.getLatestImage()
-                if img is not None:
-                    # Preprocess and extract features
-                    with torch.inference_mode():
-                        img_tensor = self.vision_preprocess(img)  # (1, 3, H, W)
-                        
-                        # Extract tokens if needed (for FiLM+TokenLearner architectures)
-                        if self.use_vision_tokens:
-                            from vision_backbones import extract_vision_tokens
-                            vision_feat_tensor = extract_vision_tokens(self.vision_backbone, img_tensor, self.backbone_name)
-                            # vision_feat_tensor: (1, N, C) tokens
-                            vision_feat = vision_feat_tensor.squeeze(0).cpu().numpy()  # (N, C)
-                        else:
-                            # Extract pooled features (default)
-                            vision_feat_tensor = self.vision_backbone(img_tensor)  # (1, feat_dim, ...) or (1, feat_dim)
-                            # Flatten to (feat_dim,) if needed
-                            if vision_feat_tensor.dim() > 2:
-                                vision_feat_tensor = torch.nn.functional.adaptive_avg_pool2d(vision_feat_tensor, (1, 1))
-                            vision_feat = vision_feat_tensor.squeeze().cpu().numpy()  # (feat_dim,)
-                else:
-                    # No image available - provide zeros
+                if img is None:
+                    # HARD FAILURE: Vision training requires real camera frames
+                    age_str = f"{self.env.getImageAge():.1f}s ago" if hasattr(self.env, 'getImageAge') and self.env.getImageAge() is not None else "never"
+                    raise RuntimeError(
+                        f"\n{'='*70}\n"
+                        f"VISION FEATURE ERROR: No camera frame available at rollout step {t}.\n"
+                        f"Last image: {age_str}\n"
+                        f"\n"
+                        f"Vision training requires continuous camera stream from Gazebo.\n"
+                        f"This error means the camera stopped publishing or was never available.\n"
+                        f"\n"
+                        f"Diagnostics:\n"
+                        f"  - Check camera topic: rostopic hz /robot_camera/image_raw\n"
+                        f"  - Check Gazebo running: rosnode list | grep gazebo\n"
+                        f"  - Verify URDF camera plugin: libgazebo_ros_camera.so\n"
+                        f"\n"
+                        f"Training ABORTED: Cannot compute vision features without real frames.\n"
+                        f"{'='*70}"
+                    )
+                
+                # Preprocess and extract features
+                with torch.inference_mode():
+                    img_tensor = self.vision_preprocess(img)  # (1, 3, H, W)
+                    
+                    # Extract tokens if needed (for FiLM+TokenLearner architectures)
                     if self.use_vision_tokens:
-                        # Default: 256 tokens of 384-d for dinov2_vits14
-                        vision_feat = np.zeros((256, 384), dtype=np.float32)
+                        from vision_backbones import extract_vision_tokens
+                        vision_feat_tensor = extract_vision_tokens(self.vision_backbone, img_tensor, self.backbone_name)
+                        # vision_feat_tensor: (1, N, C) tokens
+                        vision_feat = vision_feat_tensor.squeeze(0).cpu().numpy()  # (N, C)
                     else:
-                        vision_feat = np.zeros(self.vision_feat_dim, dtype=np.float32)
+                        # Extract pooled features (default)
+                        vision_feat_tensor = self.vision_backbone(img_tensor)  # (1, feat_dim, ...) or (1, feat_dim)
+                        # Flatten to (feat_dim,) if needed
+                        if vision_feat_tensor.dim() > 2:
+                            vision_feat_tensor = torch.nn.functional.adaptive_avg_pool2d(vision_feat_tensor, (1, 1))
+                        vision_feat = vision_feat_tensor.squeeze().cpu().numpy()  # (feat_dim,)
+                
                 batch_vision_feats.append(vision_feat)
             else:
                 vision_feat = None
@@ -896,6 +921,77 @@ class PPO:
             # Set the seed
             torch.manual_seed(self.seed)
             print(f"Successfully set seed to {self.seed}")
+
+    def _get_fusion_info(self):
+        """
+        Extract fusion architecture information for logging (one-time init only).
+        Returns list of strings describing the fusion setup.
+        """
+        info_lines = []
+        info_lines.append("=" * 70)
+        info_lines.append("FUSION ARCHITECTURE INFO")
+        info_lines.append("=" * 70)
+        
+        # Backbone info
+        if self.use_vision:
+            info_lines.append(f"Vision Backbone: {self.backbone_name}")
+            info_lines.append(f"Vision Feature Dim: {self.vision_feat_dim}")
+        else:
+            info_lines.append("Vision: DISABLED (no-vision mode)")
+        
+        # Actor architecture
+        actor_class_name = self.actor.__class__.__name__
+        info_lines.append(f"Actor Class: {actor_class_name}")
+        
+        # Check for fusion modules in actor
+        if hasattr(self.actor, 'fusion'):
+            fusion_class = self.actor.fusion.__class__.__name__
+            info_lines.append(f"Actor Fusion Module: {fusion_class}")
+            if hasattr(self.actor.fusion, 'film'):
+                info_lines.append(f"  ├─ FiLM conditioning: ENABLED")
+            if hasattr(self.actor.fusion, 'token_learner'):
+                info_lines.append(f"  ├─ TokenLearner: ENABLED")
+        elif hasattr(self.actor, 'vision_proj'):
+            info_lines.append(f"Actor Fusion Module: ProjectionMLP (legacy)")
+        else:
+            info_lines.append(f"Actor Fusion Module: None (base-state only)")
+        
+        # Critic architecture
+        critic_class_name = self.critic.__class__.__name__
+        info_lines.append(f"Critic Class: {critic_class_name}")
+        
+        # Check for fusion modules in critic
+        if hasattr(self.critic, 'fusion'):
+            fusion_class = self.critic.fusion.__class__.__name__
+            info_lines.append(f"Critic Fusion Module: {fusion_class}")
+            if hasattr(self.critic.fusion, 'film'):
+                info_lines.append(f"  ├─ FiLM conditioning: ENABLED")
+            if hasattr(self.critic.fusion, 'token_learner'):
+                info_lines.append(f"  ├─ TokenLearner: ENABLED")
+        elif hasattr(self.critic, 'vision_proj'):
+            info_lines.append(f"Critic Fusion Module: ProjectionMLP (legacy)")
+        else:
+            info_lines.append(f"Critic Fusion Module: None (base-state only)")
+        
+        # Dimension info
+        info_lines.append(f"State Dim (base): {self.obs_dim}")
+        info_lines.append(f"Action Dim: {self.act_dim}")
+        
+        # Check if using token mode
+        use_tokens = hasattr(self.actor, 'forward') and 'vision_tokens' in self.actor.forward.__code__.co_varnames
+        if use_tokens:
+            info_lines.append(f"Mode: TOKEN FUSION (spatial tokens)")
+        else:
+            info_lines.append(f"Mode: POOLED FUSION (pooled features)")
+        
+        # Parameter counts
+        actor_params = sum(p.numel() for p in self.actor.parameters())
+        critic_params = sum(p.numel() for p in self.critic.parameters())
+        info_lines.append(f"Actor Parameters: {actor_params:,}")
+        info_lines.append(f"Critic Parameters: {critic_params:,}")
+        
+        info_lines.append("=" * 70)
+        return info_lines
 
     def _log_summary(self):
         """

@@ -131,6 +131,9 @@ class Env():
         self.use_vision = use_vision
         self.vision_dim = vision_dim
         self.latest_image = None
+        self.latest_image_stamp = None
+        self.latest_image_encoding = None  # Track image encoding from ROS message
+        self.latest_image_shape = None  # Track image shape (H, W, C)
         self.image_ok = False
         
         if self.use_vision:
@@ -141,36 +144,74 @@ class Env():
             self.sub_camera = rospy.Subscriber(self.image_topic, Image, self.imageCallback)
             print(f"[Env] Subscribed to {self.image_topic}", flush=True)
             
-            # Wait briefly for first image
-            print(f"[Env] Waiting for first image on {self.image_topic}...", flush=True)
-            timeout = rospy.Time.now() + rospy.Duration(5.0)
+            # Note: We don't use cv_bridge due to boost initialization issues
+            # Instead, we manually convert ROS Image messages to numpy arrays
+            
+            # STRICT: Wait for first image (10s timeout) - training MUST fail if no camera
+            print(f"[Env] Waiting for first image on {self.image_topic} (timeout: 10s)...", flush=True)
+            timeout = rospy.Time.now() + rospy.Duration(10.0)
             while self.latest_image is None and rospy.Time.now() < timeout and not rospy.is_shutdown():
                 rospy.sleep(0.1)
             
             if self.latest_image is not None:
                 self.image_ok = True
-                print(f"[Env] First image received! encoding={self.latest_image.encoding}, "
-                      f"size={self.latest_image.width}x{self.latest_image.height}, "
-                      f"timestamp={self.latest_image.header.stamp.to_sec()}", flush=True)
+                print(f"[Env] ✓ First camera frame received!", flush=True)
+                print(f"[Env]   - encoding: {self.latest_image_encoding}", flush=True)
+                print(f"[Env]   - size: {self.latest_image_shape[1]}x{self.latest_image_shape[0]}", flush=True)
+                print(f"[Env]   - timestamp: {self.latest_image_stamp:.2f}", flush=True)
             else:
-                print(f"[Env] WARNING: No image received on {self.image_topic} within timeout", flush=True)
-                print(f"[Env] Vision features will be zeros. Consider starting fake_camera_publisher.py", flush=True)
+                # HARD FAILURE: No camera means training cannot proceed
+                raise RuntimeError(
+                    f"\n{'='*70}\n"
+                    f"CAMERA ERROR: No frames received on {self.image_topic} within 10s timeout.\n"
+                    f"Vision training requires real camera images from Gazebo.\n"
+                    f"\n"
+                    f"Diagnostics:\n"
+                    f"  - Check if Gazebo is running with GUI: roslaunch project_ppo navbot_small_house.launch gui:=true\n"
+                    f"  - Verify camera topic exists: rostopic list | grep camera\n"
+                    f"  - Check topic frequency: rostopic hz {self.image_topic}\n"
+                    f"  - Ensure robot URDF includes camera sensor with libgazebo_ros_camera.so plugin\n"
+                    f"\n"
+                    f"Training ABORTED: Cannot proceed without real camera frames.\n"
+                    f"{'='*70}"
+                )
 
     def imageCallback(self, msg):
-        """Store latest image from camera as numpy array"""
+        """Store latest image from camera as numpy array (manual conversion without cv_bridge)"""
         try:
-            from cv_bridge import CvBridge
-            bridge = CvBridge()
-            # Convert ROS Image to numpy uint8 HxWx3 (BGR)
-            cv_image = bridge.imgmsg_to_cv2(msg, desired_encoding='bgr8')
-            # Convert BGR to RGB
-            import cv2
-            self.latest_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2RGB)
-            # Store ROS timestamp
+            # Manual conversion from ROS Image to numpy array (avoids cv_bridge boost issues)
+            # ROS Image message structure:
+            #   - msg.data: flat bytes array
+            #   - msg.encoding: pixel format (e.g., 'rgb8', 'bgr8')
+            #   - msg.height, msg.width: image dimensions
+            #   - msg.step: row stride in bytes
+            
+            import numpy as np
+            
+            # Convert bytes to numpy array
+            if msg.encoding == 'rgb8':
+                # Already RGB, just reshape
+                image_array = np.frombuffer(msg.data, dtype=np.uint8).reshape(msg.height, msg.width, 3)
+                self.latest_image = image_array.copy()  # Copy to avoid reference issues
+            elif msg.encoding == 'bgr8':
+                # Need to convert BGR to RGB
+                image_array = np.frombuffer(msg.data, dtype=np.uint8).reshape(msg.height, msg.width, 3)
+                # Swap R and B channels: BGR -> RGB
+                self.latest_image = image_array[:, :, ::-1].copy()  # Reverse last dimension
+            else:
+                # Unsupported encoding
+                print(f"[Env] WARNING: Unsupported image encoding: {msg.encoding}", flush=True)
+                return
+            
+            # Store metadata
             self.latest_image_stamp = msg.header.stamp.to_sec()
+            self.latest_image_encoding = msg.encoding
+            self.latest_image_shape = self.latest_image.shape
+            
             if not self.image_ok:
                 self.image_ok = True
-                print(f"[Env] Image callback received: {msg.encoding}, {msg.width}x{msg.height}, converted to RGB numpy array", flush=True)
+                print(f"[Env] ✓ Image callback received: {msg.encoding}, {msg.width}x{msg.height}, converted to RGB numpy array (shape: {self.latest_image.shape})", flush=True)
+                
         except Exception as e:
             if not hasattr(self, '_img_convert_error_logged'):
                 self._img_convert_error_logged = True
