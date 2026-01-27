@@ -155,7 +155,7 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "Training Options:"
             echo "  --method_name <name>           Training run name (default: fuzzy3_training)"
-            echo "  --reward_type <type>           Reward function: fuzzy3|legacy (default: fuzzy3)"
+            echo "  --reward_type <type>           Reward function: fuzzy3|fuzzy3_v4|legacy|potential_field (default: fuzzy3)"
             echo "  --sampler_mode <mode>          Sampler: rect_regions|legacy (default: rect_regions)"
             echo "  --distance_uniform [bool]      Use shaped distance sampling (default: true)"
             echo "  --max_timesteps <int>          Total timesteps (default: 200000)"
@@ -296,12 +296,20 @@ if [[ "${WITH_GAZEBO}" == "true" ]]; then
         GUI_ARG="true"
     fi
     
+    # Determine launch file based on MAP variable
+    LAUNCH_FILE="navbot_small_house.launch"
+    if [[ "${MAP}" == "stage_1" ]]; then
+        LAUNCH_FILE="navbot_stage_1.launch"
+    elif [[ "${MAP}" == "small_house" ]]; then
+        LAUNCH_FILE="navbot_small_house.launch"
+    fi
+    
     docker exec navbot-ppo bash -lc "
         source /opt/ros/noetic/setup.bash && \
         source /root/catkin_ws/devel/setup.bash && \
         export TURTLEBOT3_MODEL=burger && \
         cd /root/catkin_ws/src/project_ppo && \
-        nohup roslaunch project_ppo navbot_small_house.launch gui:=${GUI_ARG} > /tmp/gazebo_hub.log 2>&1 &
+        nohup roslaunch project_ppo ${LAUNCH_FILE} gui:=${GUI_ARG} > /tmp/gazebo_hub.log 2>&1 &
     " &
     sleep 5
     
@@ -444,6 +452,9 @@ fi
 # Add vision flags if enabled
 if [[ "${USE_VISION,,}" == "true" ]]; then
     PYTHON_CMD="${PYTHON_CMD} --vision_backbone ${VISION_MODEL} --vision_proj_dim ${VISION_DIM} --architecture ${ARCHITECTURE}"
+else
+    # Explicitly disable vision by passing 'none' as backbone
+    PYTHON_CMD="${PYTHON_CMD} --vision_backbone none"
 fi
 
 # Add curriculum flags if provided

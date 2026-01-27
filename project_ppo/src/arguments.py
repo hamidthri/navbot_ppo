@@ -36,10 +36,10 @@ def get_args():
         parser.add_argument('--steps_per_iteration', dest='steps_per_iteration', type=int, default=5000)  # timesteps per PPO iteration (batch)
         parser.add_argument('--save_every_iterations', dest='save_every_iterations', type=int, default=2)  # save checkpoint every N iterations
         parser.add_argument('--resume', dest='resume', action='store_true', default=False)  # resume from existing checkpoint
-        parser.add_argument('--vision_backbone', dest='vision_backbone', type=str, default='resnet18',
-                            choices=['mobilenet_v2', 'resnet18', 'resnet34', 'resnet50', 'clip_vit_b32', 
+        parser.add_argument('--vision_backbone', dest='vision_backbone', type=str, default='none',
+                            choices=['none', 'mobilenet_v2', 'resnet18', 'resnet34', 'resnet50', 'clip_vit_b32', 
                                      'dinov2_vits14', 'dinov2_vitb14', 'dinov2_vitl14', 'dinov2_vitg14'],
-                            help='Vision backbone architecture')
+                            help='Vision backbone architecture (none to disable vision)')
         parser.add_argument('--vision_proj_dim', dest='vision_proj_dim', type=int, default=64, help='Vision projection dimension')
         
         # NEW: Architecture selection
@@ -86,8 +86,8 @@ def get_args():
         
         # Reward type selection
         parser.add_argument('--reward_type', dest='reward_type', type=str, default='legacy',
-                            choices=['legacy', 'fuzzy3', 'fuzzy3_v4'],
-                            help='Reward function type: legacy (default), fuzzy3 (3-input Sugeno), or fuzzy3_v4 (anti-stall + robust clearance)')
+                            choices=['legacy', 'fuzzy3', 'fuzzy3_v4', 'potential_field'],
+                            help='Reward function type: legacy (default), fuzzy3 (3-input Sugeno), fuzzy3_v4 (anti-stall), or potential_field (adaptive safety)')
         # Fixed case capture/replay for debugging
         parser.add_argument('--fixed_case_path', dest='fixed_case_path', type=str, default=None,
                             help='Path to fixed_case.json for replay mode (replays same start/goal)')

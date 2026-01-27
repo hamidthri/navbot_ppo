@@ -297,7 +297,15 @@ class PPO:
             # Calculate advantage at k-th iteration
             self.V, _ = self.evaluate(batch_obs, batch_acts, batch_vision_feats)
             value_func.append(self.V.detach().mean())
-            A_k = batch_rtgs - self.V.detach()  # ALG STEP 5
+            
+            # Normalize returns for critic training (improves stability)
+            rtg_mean = batch_rtgs.mean()
+            rtg_std = batch_rtgs.std() + 1e-10
+            batch_rtgs_norm = (batch_rtgs - rtg_mean) / rtg_std
+            
+            # Calculate advantage using normalized returns
+            A_k = batch_rtgs_norm - self.V.detach()  # ALG STEP 5
+            
             f = open(os.path.join(self.log_dir_path, 'V_fun.txt'), 'a+')
             for i in value_func:
                 f.write(str(i))
@@ -639,7 +647,7 @@ class PPO:
             # Apply timeout penalty if timeout without collision/arrival
             if is_timeout:
                 TIMEOUT_PEN = -80.0
-                rew += TIMEOUT_PEN
+                rew = TIMEOUT_PEN  # REPLACE nav reward, don't add to it
                 done = True  # Treat timeout as terminal
                 
             past_action = action

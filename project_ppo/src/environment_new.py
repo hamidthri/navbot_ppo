@@ -70,6 +70,19 @@ class Env():
             from fuzzy3_reward_v4 import Fuzzy3RewardV4
             self.reward_fn = Fuzzy3RewardV4(theta_is_relative=True)
             print(f"[Env] Reward: Fuzzy3RewardV4 (anti-stall, robust clearance, conditional danger)", flush=True)
+        elif reward_type == 'potential_field':
+            import sys
+            import os
+            sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'rewards'))
+            from potential_field import PotentialFieldRewardSmallHouse
+            self.reward_fn = PotentialFieldRewardSmallHouse(
+                theta_is_relative=True,
+                lidar_max_range=3.5,
+                collision_threshold=0.2,
+                goal_threshold=0.2,
+                v_max=0.25,
+            )
+            print(f"[Env] Reward: PotentialFieldReward (adaptive safety, multi-scale repulsion)", flush=True)
         else:
             import sys
             import os
@@ -369,8 +382,8 @@ class Env():
         current_distance = math.hypot(self.goal_position.position.x - self.position.x, self.goal_position.position.y - self.position.y)
         
         # Use reward function based on type
-        if self.reward_type in ['fuzzy3', 'fuzzy3_v4']:
-            # Fuzzy reward needs: current_distance, yaw, rel_theta, scan_range, done, arrive
+        if self.reward_type in ['fuzzy3', 'fuzzy3_v4', 'potential_field']:
+            # Fuzzy/Potential Field rewards need: current_distance, yaw, rel_theta, scan_range, done, arrive
             reward = self.reward_fn.compute(
                 current_distance=current_distance,
                 current_yaw=self.yaw,
