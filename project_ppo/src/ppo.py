@@ -13,7 +13,8 @@ import torch
 from tensorboardX import SummaryWriter
 import torch.nn as nn
 from torch.optim import Adam
-from torch.distributions import MultivariateNormal
+from torch.distributions import MultivariateNormal, Normal, TransformedDistribution
+from torch.distributions.transforms import SigmoidTransform, TanhTransform
 import matplotlib.pyplot as plt
 import os, glob
 import torch.nn.functional as F
@@ -629,6 +630,18 @@ class PPO:
             # Step environment
             obs, rew, done, arrive = self.env.step(action, past_action)
 
+            # Check for timeout BEFORE adding reward to batch
+            timeout = (one_round + 1 >= self.max_timesteps_per_episode)
+            
+            # Track if this is a pure timeout (before modifying done flag)
+            is_timeout = timeout and (not done) and (not arrive)
+            
+            # Apply timeout penalty if timeout without collision/arrival
+            if is_timeout:
+                TIMEOUT_PEN = -80.0
+                rew += TIMEOUT_PEN
+                done = True  # Treat timeout as terminal
+                
             past_action = action
             episode_reward += rew
             ep_rews.append(rew)
@@ -638,7 +651,6 @@ class PPO:
             one_round += 1
             
             # Check termination: collision, arrival, or timeout
-            timeout = (one_round >= self.max_timesteps_per_episode)
             if done or arrive or timeout:
                 # Compute episode time
                 ep_time = time.time() - ep_start_time
@@ -646,7 +658,7 @@ class PPO:
                 # Log episode metrics
                 success = 1 if arrive else 0
                 collision = 1 if (done and not arrive) else 0
-                timeout_flag = 1 if (timeout and not done and not arrive) else 0
+                timeout_flag = 1 if is_timeout else 0
                 
                 self._log_episode_metrics(
                     episode_num=self.episode_count,
@@ -680,6 +692,11 @@ class PPO:
                 past_action = [0, 0]
                 done = False
                 obs = self.env.reset()
+                
+                # Update curriculum step
+                if hasattr(self.env, 'update_curriculum_step'):
+                    self.env.update_curriculum_step(t_so_far + t)
+                
                 ep_start_time = time.time()
             # Run an episode for a maximum of max_timesteps_per_episode timesteps
             # If render is specified, render the environment
@@ -717,13 +734,24 @@ class PPO:
         self.logger['batch_rews'] = batch_rews
         self.logger['batch_lens'] = batch_lens
         
+        # Compute mean action statistics for diagnostics
+        batch_acts_np = batch_acts.cpu().numpy()
+        mean_lin = np.mean(batch_acts_np[:, 0])
+        mean_ang = np.mean(batch_acts_np[:, 1])
+        frac_lin_lt_0p01 = np.mean(batch_acts_np[:, 0] < 0.01) * 100
+        frac_lin_gt_0p10 = np.mean(batch_acts_np[:, 0] > 0.10) * 100
+        
         # Create iteration metrics dictionary
         iter_metrics = {
             'successes': iter_successes,
             'collisions': iter_collisions,
             'timeouts': iter_timeouts,
             'ep_times': iter_ep_times,
-            'ep_count': iter_ep_count
+            'ep_count': iter_ep_count,
+            'mean_action_lin': mean_lin,
+            'mean_action_ang': mean_ang,
+            'frac_lin_lt_0p01': frac_lin_lt_0p01,
+            'frac_lin_gt_0p10': frac_lin_gt_0p10,
         }
 
         return batch_obs.to(device), batch_acts.to(device), batch_log_probs.to(device), batch_rtgs.to(device), \
@@ -761,54 +789,71 @@ class PPO:
 
     def get_action(self, obs, t_so_far, one_round, vision_feat=None):
         """
-			Queries an action from the actor network, should be called from rollout.
+        Queries an action from the actor network with bounded distributions.
+        
+        Uses SigmoidTransform for linear (0,1) and TanhTransform for angular (-1,1).
+        This ensures correct log_prob computation for PPO gradients.
 
-			Parameters:
-				obs - the base state observation at the current timestep
-				vision_feat - the vision features (1280-d) or tokens (N, C) for this timestep (optional)
+        Parameters:
+            obs - the base state observation at the current timestep
+            vision_feat - the vision features or tokens for this timestep (optional)
 
-			Return:
-				action - the action to take, as a numpy array
-				log_prob - the log probability of the selected action in the distribution
-		"""
+        Return:
+            action - the action to take, as a numpy array (2,)
+            log_prob - the log probability of the selected action (scalar)
+        """
         self.t_step = one_round
-        # Query the actor network for a mean action
+        
+        # Query the actor network for mean action (unbounded)
         if self.use_vision and vision_feat is not None:
             vision_feat_tensor = torch.tensor(vision_feat, dtype=torch.float).unsqueeze(0).to(device)
-            # vision_feat_tensor: (1, feat_dim) for pooled, or (1, N, C) for tokens
             
             if self.use_vision_tokens:
-                mean = self.actor(obs, vision_tokens=vision_feat_tensor)
+                mean_raw = self.actor(obs, vision_tokens=vision_feat_tensor)
             else:
-                mean = self.actor(obs, vision_feat=vision_feat_tensor)
+                mean_raw = self.actor(obs, vision_feat=vision_feat_tensor)
         else:
-            mean = self.actor(obs)
+            mean_raw = self.actor(obs)
 
-        # Create distribution and sample action
+        # Anneal covariance if needed
         if self.t_step == 0 and t_so_far > 50000 and self.cov_mat[0][0] >= 0.1:
             self.cov_mat *= 0.995
-        dist = MultivariateNormal(mean, self.cov_mat)
-
-        action = dist.sample()
         
-        # Normalize shape: ensure action is (B, action_dim)
-        if action.dim() == 1:
-            action = action.unsqueeze(0)  # (action_dim,) -> (1, action_dim)
+        # Extract standard deviations from diagonal covariance
+        std_lin = torch.sqrt(self.cov_mat[0, 0])
+        std_ang = torch.sqrt(self.cov_mat[1, 1])
         
-        # Clamp action dimensions
-        action_clamped = torch.stack([
-            torch.clamp(action[:, 0], 0, 1),
-            torch.clamp(action[:, 1], -1, 1)
-        ], dim=1)
+        # Normalize shapes
+        if mean_raw.dim() == 1:
+            mean_raw = mean_raw.unsqueeze(0)  # (2,) -> (1, 2)
         
-        log_prob = dist.log_prob(action_clamped)
+        # Build bounded distributions
+        # Linear: sigmoid transform maps Normal -> (0, 1)
+        dist_lin = TransformedDistribution(
+            Normal(mean_raw[:, 0], std_lin),
+            [SigmoidTransform()]
+        )
+        
+        # Angular: tanh transform maps Normal -> (-1, 1)
+        dist_ang = TransformedDistribution(
+            Normal(mean_raw[:, 1], std_ang),
+            [TanhTransform(cache_size=1)]
+        )
+        
+        # Sample actions (reparameterized)
+        lin = dist_lin.rsample()
+        ang = dist_ang.rsample()
+        action = torch.stack([lin, ang], dim=1)  # (1, 2)
+        
+        # Compute log probability
+        log_prob = dist_lin.log_prob(lin) + dist_ang.log_prob(ang)
         
         # Normalize shape: ensure log_prob is (B,)
         if log_prob.dim() == 0:
-            log_prob = log_prob.unsqueeze(0)  # scalar -> (1,)
+            log_prob = log_prob.unsqueeze(0)
         
-        # Return as numpy arrays with batch dim: action (1, 2), log_prob (1,)
-        return action_clamped.detach().cpu().numpy()[0], log_prob.detach().cpu().numpy()[0]
+        # Return as numpy arrays: action (2,), log_prob (scalar)
+        return action.detach().cpu().numpy()[0], log_prob.detach().cpu().numpy()[0]
 
     def evaluate(self, batch_obs, batch_acts, batch_vision_feats=None):
         """
@@ -832,19 +877,32 @@ class PPO:
         else:
             self.V = self.critic(batch_obs, vision_feat=batch_vision_feats).squeeze()
 
-        # Calculate log probabilities using most recent actor network
+        # Calculate log probabilities using bounded distributions (same as get_action)
         if self.use_vision_tokens and batch_vision_feats is not None:
-            mean = self.actor(batch_obs, vision_tokens=batch_vision_feats)
+            mean_raw = self.actor(batch_obs, vision_tokens=batch_vision_feats)
         else:
-            mean = self.actor(batch_obs, vision_feat=batch_vision_feats)
-            
-        # Clamp without in-place operations
-        mean_clamped = torch.stack([
-            torch.clamp(mean[:, 0], 0, 1),
-            torch.clamp(mean[:, 1], -1, 1)
-        ], dim=1)
-        dist = MultivariateNormal(mean_clamped, self.cov_mat)
-        log_probs = dist.log_prob(batch_acts)
+            mean_raw = self.actor(batch_obs, vision_feat=batch_vision_feats)
+        
+        # Extract standard deviations
+        std_lin = torch.sqrt(self.cov_mat[0, 0])
+        std_ang = torch.sqrt(self.cov_mat[1, 1])
+        
+        # Build bounded distributions (must match get_action)
+        dist_lin = TransformedDistribution(
+            Normal(mean_raw[:, 0], std_lin),
+            [SigmoidTransform()]
+        )
+        dist_ang = TransformedDistribution(
+            Normal(mean_raw[:, 1], std_ang),
+            [TanhTransform(cache_size=1)]
+        )
+        
+        # Clamp actions for numerical stability (avoid log(0) at exact boundaries)
+        a_lin = batch_acts[:, 0].clamp(1e-6, 1 - 1e-6)
+        a_ang = batch_acts[:, 1].clamp(-1 + 1e-6, 1 - 1e-6)
+        
+        # Compute log probs for given batch_acts
+        log_probs = dist_lin.log_prob(a_lin) + dist_ang.log_prob(a_ang)
         
         return self.V, log_probs
 
@@ -1029,6 +1087,12 @@ class PPO:
         else:
             success_rate = collision_rate = timeout_rate = mean_ep_time = 0.0
         
+        # Extract action diagnostics
+        mean_action_lin = iter_metrics.get('mean_action_lin', 0.0)
+        mean_action_ang = iter_metrics.get('mean_action_ang', 0.0)
+        frac_lin_lt_0p01 = iter_metrics.get('frac_lin_lt_0p01', 0.0)
+        frac_lin_gt_0p10 = iter_metrics.get('frac_lin_gt_0p10', 0.0)
+        
         # Extract timing metrics
         rollout_time = self.logger.get('rollout_time', 0.0)
         update_time = self.logger.get('update_time', 0.0)
@@ -1081,6 +1145,7 @@ class PPO:
         print(f"Param Delta: Actor={actor_param_delta:.6f} | Critic={critic_param_delta:.6f}", flush=True)
         print(f"---", flush=True)
         print(f"Action Stats: mean(|a|)={action_mean:.4f} | std(a)={action_std:.4f} | saturated={saturated_frac*100:.1f}%", flush=True)
+        print(f"Action Diagnostics: lin_mean={mean_action_lin:.4f} | ang_mean={mean_action_ang:.4f} | lin<0.01={frac_lin_lt_0p01:.1f}% | lin>0.10={frac_lin_gt_0p10:.1f}%", flush=True)
         print(f"Value Targets: mean={rtg_mean:.2f} | std={rtg_std:.2f} | range=[{rtg_min:.2f}, {rtg_max:.2f}] | IQR=[{rtg_p25:.2f}, {rtg_p75:.2f}]", flush=True)
         print(f"================================================================================", flush=True)
         print(flush=True)
@@ -1112,6 +1177,12 @@ class PPO:
         self.writer.add_scalar("ppo/critic_grad_norm", critic_grad_norm, i_so_far)
         self.writer.add_scalar("ppo/actor_param_delta", actor_param_delta, i_so_far)
         self.writer.add_scalar("ppo/critic_param_delta", critic_param_delta, i_so_far)
+        
+        # Log action diagnostics to TensorBoard
+        self.writer.add_scalar("action/mean_linear", mean_action_lin, i_so_far)
+        self.writer.add_scalar("action/mean_angular", mean_action_ang, i_so_far)
+        self.writer.add_scalar("action/frac_lin_lt_0p01", frac_lin_lt_0p01, i_so_far)
+        self.writer.add_scalar("action/frac_lin_gt_0p10", frac_lin_gt_0p10, i_so_far)
 
         ## take all logging data
 

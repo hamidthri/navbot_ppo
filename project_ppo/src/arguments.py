@@ -86,12 +86,19 @@ def get_args():
         
         # Reward type selection
         parser.add_argument('--reward_type', dest='reward_type', type=str, default='legacy',
-                            choices=['legacy', 'fuzzy3'],
-                            help='Reward function type: legacy (default) or fuzzy3 (3-input Sugeno)')
-        
+                            choices=['legacy', 'fuzzy3', 'fuzzy3_v4'],
+                            help='Reward function type: legacy (default), fuzzy3 (3-input Sugeno), or fuzzy3_v4 (anti-stall + robust clearance)')
         # Fixed case capture/replay for debugging
         parser.add_argument('--fixed_case_path', dest='fixed_case_path', type=str, default=None,
                             help='Path to fixed_case.json for replay mode (replays same start/goal)')
+        
+        # Distance curriculum arguments
+        parser.add_argument('--curriculum_min_dist', dest='curriculum_min_dist', type=float, default=1.0,
+                            help='Curriculum minimum goal distance in meters (default: 1.0)')
+        parser.add_argument('--curriculum_max_dist', dest='curriculum_max_dist', type=float, default=8.0,
+                            help='Curriculum maximum goal distance in meters (default: 8.0)')
+        parser.add_argument('--curriculum_steps', dest='curriculum_steps', type=int, default=100000,
+                            help='Number of training steps to ramp from min to max distance (default: 100000)')
         
         args = parser.parse_args()
 

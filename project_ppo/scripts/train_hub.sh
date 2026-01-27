@@ -50,6 +50,11 @@ MAP="${MAP:-small_house}"
 NO_KILL="${NO_KILL:-false}"
 TIMEOUT_READY_SEC="${TIMEOUT_READY_SEC:-60}"
 
+# Curriculum parameters (passed through to Python)
+CURRICULUM_MIN_DIST=""
+CURRICULUM_MAX_DIST=""
+CURRICULUM_STEPS=""
+
 # Parse command-line arguments (override defaults)
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -129,6 +134,18 @@ while [[ $# -gt 0 ]]; do
             ;;
         --timeout_ready_sec)
             TIMEOUT_READY_SEC="$2"
+            shift 2
+            ;;
+        --curriculum_min_dist)
+            CURRICULUM_MIN_DIST="$2"
+            shift 2
+            ;;
+        --curriculum_max_dist)
+            CURRICULUM_MAX_DIST="$2"
+            shift 2
+            ;;
+        --curriculum_steps)
+            CURRICULUM_STEPS="$2"
             shift 2
             ;;
         --help|-h)
@@ -291,10 +308,13 @@ if [[ "${WITH_GAZEBO}" == "true" ]]; then
     echo "  Waiting for Gazebo topics to be ready..."
     GAZEBO_READY=false
     for i in $(seq 1 ${TIMEOUT_READY_SEC}); do
-        SCAN_OK=$(docker exec navbot-ppo bash -lc "source /opt/ros/noetic/setup.bash && timeout 2 rostopic list 2>/dev/null | grep -c '/scan' || echo 0")
-        ODOM_OK=$(docker exec navbot-ppo bash -lc "source /opt/ros/noetic/setup.bash && timeout 2 rostopic list 2>/dev/null | grep -c '/odom' || echo 0")
+        SCAN_OK=$(docker exec navbot-ppo bash -lc "source /opt/ros/noetic/setup.bash && timeout 2 rostopic list 2>/dev/null | grep -c '/scan'" || echo "0")
+        ODOM_OK=$(docker exec navbot-ppo bash -lc "source /opt/ros/noetic/setup.bash && timeout 2 rostopic list 2>/dev/null | grep -c '/odom'" || echo "0")
+        # Sanitize output to ensure single numeric value
+        SCAN_OK=$(echo "${SCAN_OK}" | tail -1 | tr -d '\n\r ')
+        ODOM_OK=$(echo "${ODOM_OK}" | tail -1 | tr -d '\n\r ')
         
-        if [[ "${SCAN_OK}" -gt 0 ]] && [[ "${ODOM_OK}" -gt 0 ]]; then
+        if [[ "${SCAN_OK}" -gt 0 ]] 2>/dev/null && [[ "${ODOM_OK}" -gt 0 ]] 2>/dev/null; then
             GAZEBO_READY=true
             echo "  ✓ Gazebo ready - /scan and /odom topics available (${i}s)"
             break
@@ -320,8 +340,9 @@ if [[ "${WITH_GAZEBO}" == "true" ]]; then
     
     echo ""
     echo "[4/4] Verifying Gazebo services..."
-    SERVICES_OK=$(docker exec navbot-ppo bash -lc "source /opt/ros/noetic/setup.bash && timeout 5 rosservice list 2>/dev/null | grep -c '/gazebo/' || echo 0")
-    if [[ "${SERVICES_OK}" -gt 0 ]]; then
+    SERVICES_OK=$(docker exec navbot-ppo bash -lc "source /opt/ros/noetic/setup.bash && timeout 5 rosservice list 2>/dev/null | grep -c '/gazebo/'" || echo "0")
+    SERVICES_OK=$(echo "${SERVICES_OK}" | tail -1 | tr -d '\n\r ')
+    if [[ "${SERVICES_OK}" -gt 0 ]] 2>/dev/null; then
         echo "  ✓ Gazebo services available"
     else
         echo "  ⚠ WARNING: Gazebo services not detected (training may fail)"
@@ -348,9 +369,10 @@ if [[ "${USE_VISION,,}" == "true" ]]; then
     echo ""
     
     echo "[1/3] Checking if camera topic exists..."
-    CAMERA_TOPIC_EXISTS=$(docker exec navbot-ppo bash -lc "source /opt/ros/noetic/setup.bash && timeout 5 rostopic list 2>/dev/null | grep -c '/robot_camera/image_raw' || echo 0")
+    CAMERA_TOPIC_EXISTS=$(docker exec navbot-ppo bash -lc "source /opt/ros/noetic/setup.bash && timeout 5 rostopic list 2>/dev/null | grep -c '/robot_camera/image_raw'" || echo "0")
+    CAMERA_TOPIC_EXISTS=$(echo "${CAMERA_TOPIC_EXISTS}" | tail -1 | tr -d '\n\r ')
     
-    if [[ "${CAMERA_TOPIC_EXISTS}" -gt 0 ]]; then
+    if [[ "${CAMERA_TOPIC_EXISTS}" -gt 0 ]] 2>/dev/null; then
         echo "  ✓ Camera topic /robot_camera/image_raw exists"
     else
         echo "  ✗ ERROR: Camera topic /robot_camera/image_raw not found"
@@ -422,6 +444,17 @@ fi
 # Add vision flags if enabled
 if [[ "${USE_VISION,,}" == "true" ]]; then
     PYTHON_CMD="${PYTHON_CMD} --vision_backbone ${VISION_MODEL} --vision_proj_dim ${VISION_DIM} --architecture ${ARCHITECTURE}"
+fi
+
+# Add curriculum flags if provided
+if [[ -n "${CURRICULUM_MIN_DIST}" ]]; then
+    PYTHON_CMD="${PYTHON_CMD} --curriculum_min_dist ${CURRICULUM_MIN_DIST}"
+fi
+if [[ -n "${CURRICULUM_MAX_DIST}" ]]; then
+    PYTHON_CMD="${PYTHON_CMD} --curriculum_max_dist ${CURRICULUM_MAX_DIST}"
+fi
+if [[ -n "${CURRICULUM_STEPS}" ]]; then
+    PYTHON_CMD="${PYTHON_CMD} --curriculum_steps ${CURRICULUM_STEPS}"
 fi
 
 # ============================================================================

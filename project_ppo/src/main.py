@@ -720,7 +720,10 @@ def main(args):
     env = Env(is_training, use_vision=use_vision, vision_dim=vision_dim, 
               sampler_mode=sampler_mode, debug_sampler=args.debug_sampler,
               distance_uniform=args.distance_uniform, reward_type=args.reward_type,
-              fixed_case_path=args.fixed_case_path, method_run_dir=method_run_dir)
+              fixed_case_path=args.fixed_case_path, method_run_dir=method_run_dir,
+              curriculum_min_dist=args.curriculum_min_dist,
+              curriculum_max_dist=args.curriculum_max_dist,
+              curriculum_steps=args.curriculum_steps)
     
     # State dimension is ONLY base state (LiDAR + pose + past actions)
     # Vision features are handled separately in policy network

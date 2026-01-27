@@ -24,7 +24,8 @@ goal_model_dir = os.path.join(os.path.split(os.path.realpath(__file__))[0], '..'
 len_batch = 36  # 360 laser points / 36 = 10 picked laser features
 
 class Env():
-    def __init__(self, is_training, use_vision=False, vision_dim=64, sampler_mode='legacy', debug_sampler=False, distance_uniform=False, reward_type='legacy', fixed_case_path=None, method_run_dir=None):
+    def __init__(self, is_training, use_vision=False, vision_dim=64, sampler_mode='legacy', debug_sampler=False, distance_uniform=False, reward_type='legacy', fixed_case_path=None, method_run_dir=None,
+                 curriculum_min_dist=0.5, curriculum_max_dist=5.0, curriculum_steps=100000):
         self.position = Pose()
         self.goal_position = Pose()
         self.goal_position.position.x = 0.
@@ -46,6 +47,13 @@ class Env():
         else:
             self.threshold_arrive = 0.4
         
+        # Simple distance curriculum: gradually increase goal distance
+        self.curriculum_min_dist = curriculum_min_dist
+        self.curriculum_max_dist = curriculum_max_dist
+        self.curriculum_steps = curriculum_steps
+        self.training_step = 0
+        print(f"[Env] Distance curriculum: {curriculum_min_dist:.1f}m -> {curriculum_max_dist:.1f}m over {curriculum_steps} steps", flush=True)
+        
         # Reward system setup
         self.reward_type = reward_type
         if reward_type == 'fuzzy3':
@@ -54,12 +62,21 @@ class Env():
             sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'rewards'))
             from fuzzy3_reward import Fuzzy3Reward
             self.reward_fn = Fuzzy3Reward()
+            print(f"[Env] Reward: Fuzzy3Reward (original)", flush=True)
+        elif reward_type == 'fuzzy3_v4':
+            import sys
+            import os
+            sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'rewards'))
+            from fuzzy3_reward_v4 import Fuzzy3RewardV4
+            self.reward_fn = Fuzzy3RewardV4(theta_is_relative=True)
+            print(f"[Env] Reward: Fuzzy3RewardV4 (anti-stall, robust clearance, conditional danger)", flush=True)
         else:
             import sys
             import os
             sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'rewards'))
             from legacy_reward import LegacyReward
             self.reward_fn = LegacyReward()
+            print(f"[Env] Reward: LegacyReward", flush=True)
         
         # Sampler setup
         self.sampler_mode = sampler_mode
@@ -223,6 +240,16 @@ class Env():
             return None
         return self.latest_image
     
+    def update_curriculum_step(self, step):
+        """Update training step for curriculum (called from PPO)"""
+        self.training_step = step
+    
+    def get_current_max_distance(self):
+        """Get current maximum goal distance based on curriculum progress"""
+        progress = min(1.0, self.training_step / self.curriculum_steps)
+        current_max = self.curriculum_min_dist + progress * (self.curriculum_max_dist - self.curriculum_min_dist)
+        return current_max
+    
     def getImageAge(self):
         """Return age of latest image in seconds, or None if unavailable"""
         if not hasattr(self, 'latest_image_stamp'):
@@ -342,8 +369,8 @@ class Env():
         current_distance = math.hypot(self.goal_position.position.x - self.position.x, self.goal_position.position.y - self.position.y)
         
         # Use reward function based on type
-        if self.reward_type == 'fuzzy3':
-            # Fuzzy3 reward needs: current_distance, yaw, rel_theta, scan_range, done, arrive
+        if self.reward_type in ['fuzzy3', 'fuzzy3_v4']:
+            # Fuzzy reward needs: current_distance, yaw, rel_theta, scan_range, done, arrive
             reward = self.reward_fn.compute(
                 current_distance=current_distance,
                 current_yaw=self.yaw,
@@ -626,36 +653,67 @@ class Env():
         elif self.sampler_mode == 'rect_regions' and self.rect_sampler is not None:
             import math
             
-            # Sample start/goal from different regions
-            result = self.rect_sampler.sample_start_goal()
+            # Get current max distance for curriculum
+            d_max_current = self.get_current_max_distance()
+            d_min = self.curriculum_min_dist
             
-            if result is None:
-                print("[RESET ERROR] rect_sampler failed to generate valid start/goal pair", flush=True)
-                # Fallback to default random sampling
-                rospy.wait_for_service('/gazebo/reset_world')
-                try:
-                    self.reset_world()
-                except (rospy.ServiceException) as e:
-                    pass
+            # Sample with distance filter (rejection sampling)
+            max_attempts = 50
+            result = None
+            
+            for attempt in range(max_attempts):
+                candidate = self.rect_sampler.sample_start_goal()
+                if candidate is None:
+                    continue
                 
-                self.goal_position.position.x = random.uniform(-3.6, 3.6)
-                self.goal_position.position.y = random.uniform(-3.6, 3.6)
-                self.goal_position.position.z = 0.01
+                (sx, sy, syaw), (gx, gy), s_region_id, g_region_id = candidate
+                dist = math.hypot(gx - sx, gy - sy)
+                
+                # Accept if within curriculum distance range
+                if d_min <= dist <= d_max_current:
+                    result = candidate
+                    break
+            
+            # Fallback: if rejection sampling failed, place a fallback goal at
+            # a guaranteed distance inside the curriculum range around the
+            # sampled start. This avoids unexpectedly-large distances from
+            # simply resampling a region-wide goal.
+            if result is None:
+                # Try to obtain a valid start to place the fallback goal around
+                temp = self.rect_sampler.sample_start_goal()
+                if temp is not None:
+                    (sx, sy, syaw), (_, _), s_region_id, _ = temp
+                else:
+                    # Ultimate fallback start (map centre-ish)
+                    sx, sy, syaw = 0.0, 0.0, 0.0
+                    s_region_id = -1
+
+                # Choose a fallback radius in the middle of [d_min, d_max_current]
+                r = (d_min + d_max_current) / 2.0
+                theta = random.random() * 2.0 * math.pi
+                gx = sx + r * math.cos(theta)
+                gy = sy + r * math.sin(theta)
+                g_region_id = -1
             else:
                 (sx, sy, syaw), (gx, gy), s_region_id, g_region_id = result
-                
-                if self.debug_sampler:
-                    print(f"[RESET] start=R{s_region_id}({sx:.2f}, {sy:.2f}, {math.degrees(syaw):.1f}°) goal=R{g_region_id}({gx:.2f}, {gy:.2f})", flush=True)
-                
-                # Set robot pose using gazebo_reset_helpers
-                success = self.gazebo_helpers.set_robot_pose('turtlebot3_burger', sx, sy, syaw, z=0.07)
-                if not success:
-                    print("[RESET WARNING] set_robot_pose returned False", flush=True)
-                
-                # Set goal position
-                self.goal_position.position.x = gx
-                self.goal_position.position.y = gy
-                self.goal_position.position.z = 0.01
+            
+            # Log curriculum progress every 20 episodes
+            if self.episode_count % 20 == 0:
+                dist = math.hypot(gx - sx, gy - sy)
+                print(f"[CURRICULUM ep{self.episode_count}] step={self.training_step} dist={dist:.2f}m range=[{d_min:.1f},{d_max_current:.1f}m]", flush=True)
+            
+            if self.debug_sampler:
+                print(f"[RESET] start=R{s_region_id}({sx:.2f}, {sy:.2f}, {math.degrees(syaw):.1f}°) goal=R{g_region_id}({gx:.2f}, {gy:.2f})", flush=True)
+            
+            # Set robot pose using gazebo_reset_helpers
+            success = self.gazebo_helpers.set_robot_pose('turtlebot3_burger', sx, sy, syaw, z=0.07)
+            if not success:
+                print("[RESET WARNING] set_robot_pose returned False", flush=True)
+            
+            # Set goal position
+            self.goal_position.position.x = gx
+            self.goal_position.position.y = gy
+            self.goal_position.position.z = 0.01
             
             # Spawn goal marker
             rospy.wait_for_service('/gazebo/spawn_sdf_model')
