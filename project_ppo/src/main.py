@@ -261,14 +261,20 @@ def test(env, actor_model):
     # independently as a binary file that can be loaded in with torch.
     eval_policy(policy=policy, env=env, render=True)
 
-def evaluate(env, hyperparameters, actor_model, critic_model, num_episodes):
+def evaluate(env, hyperparameters, actor_model, critic_model, num_episodes, stochastic=False):
     """
         Evaluation mode: Load checkpoint and run N episodes to compute metrics.
+        
+        Args:
+            stochastic: If True, sample actions from policy distribution (training-like).
+                       If False, use mean action (deterministic eval).
     """
     import csv
     import time as time_module
+    from torch.distributions import MultivariateNormal
     
-    print(f"\nEvaluation: Running {num_episodes} episodes", flush=True)
+    eval_mode = "STOCHASTIC" if stochastic else "DETERMINISTIC"
+    print(f"\nEvaluation: Running {num_episodes} episodes in {eval_mode} mode", flush=True)
     
     method_name = hyperparameters.get('method_name', 'baseline')
     exp_id = hyperparameters['exp_id']
@@ -292,9 +298,38 @@ def evaluate(env, hyperparameters, actor_model, critic_model, num_episodes):
             sys.exit(0)
         actor_model = actor_path[-1]
     
-    print(f"Loading actor: {actor_model}", flush=True)
+    print("\n" + "="*80, flush=True)
+    print("CHECKPOINT LOADING", flush=True)
+    print("="*80, flush=True)
+    print(f"Checkpoint path: {actor_model}", flush=True)
+    print(f"Checkpoint exists: {os.path.exists(actor_model)}", flush=True)
+    print(f"Checkpoint size: {os.path.getsize(actor_model) / (1024*1024):.2f} MB", flush=True)
+    print("="*80 + "\n", flush=True)
     
-    policy = NetActor(actual_state_dim, action_dim).to(device)
+    # Extract vision and architecture parameters from hyperparameters
+    vision_backbone = hyperparameters.get('vision_backbone', None)
+    vision_proj_dim = hyperparameters.get('vision_proj_dim', 64)
+    architecture_name = hyperparameters.get('architecture', 'default')
+    
+    # Build actor with same architecture as training
+    arch_hyperparams = {}
+    if vision_backbone:
+        print(f"[Eval] Vision enabled: backbone={vision_backbone}, proj_dim={vision_proj_dim}, arch={architecture_name}", flush=True)
+        arch_hyperparams['use_vision'] = True
+        
+        # Get vision feature dim based on backbone
+        from vision_backbones import get_backbone_feat_dim
+        vision_feat_dim = get_backbone_feat_dim(vision_backbone)
+        arch_hyperparams['vision_feat_dim'] = vision_feat_dim
+        arch_hyperparams['vision_proj_dim'] = vision_proj_dim
+        
+        if architecture_name == 'vit_film_tokenlearner' or architecture_name == 'recurrent_vit_film_tokenlearner':
+            arch_hyperparams['num_learned_tokens'] = hyperparameters.get('num_learned_tokens', 8)
+            arch_hyperparams['vision_emb_dim'] = hyperparameters.get('vision_emb_dim', 128)
+            if architecture_name == 'recurrent_vit_film_tokenlearner':
+                arch_hyperparams['gru_hidden_dim'] = hyperparameters.get('gru_hidden_dim', 128)
+    
+    policy = NetActor(actual_state_dim, action_dim, **arch_hyperparams).to(device)
     policy.load_state_dict(torch.load(actor_model))
     policy.eval()
     
@@ -310,6 +345,26 @@ def evaluate(env, hyperparameters, actor_model, critic_model, num_episodes):
     # Run episodes
     metrics = {'success': 0, 'collision': 0, 'timeout': 0, 'lengths': [], 'returns': [], 'path_lengths': [], 'times': []}
     
+    # Track action statistics for diagnosis
+    all_actions_linear = []
+    all_actions_angular = []
+    all_cmd_vel_linear = []
+    all_cmd_vel_angular = []
+    
+    # Stochastic sampling setup (similar to PPO training)
+    if stochastic:
+        # Use same covariance as training for consistency
+        cov_var = torch.full(size=(action_dim,), fill_value=0.5)
+        cov_mat = torch.diag(cov_var).to(device)
+    
+    print("\n" + "="*80, flush=True)
+    print(f"STARTING EVALUATION: {num_episodes} EPISODES ({eval_mode} MODE)", flush=True)
+    print(f"Action bounds: linear [0, 1] → cmd_vel [0, {action_linear_max}] m/s", flush=True)
+    print(f"               angular [-1, 1] → cmd_vel [-{action_angular_max}, {action_angular_max}] rad/s", flush=True)
+    if stochastic:
+        print(f"Stochastic mode: sampling from policy distribution with cov_var={cov_var[0]:.3f}", flush=True)
+    print("="*80 + "\n", flush=True)
+    
     for ep in range(num_episodes):
         ep_start_time = time_module.time()
         obs = env.reset()
@@ -321,11 +376,60 @@ def evaluate(env, hyperparameters, actor_model, critic_model, num_episodes):
         past_action = np.array([0., 0.])
         prev_pos = None
         
+        # Print first few actions for first episode
+        print_actions = (ep == 0)
+        
         while ep_length < hyperparameters['max_timesteps_per_episode']:
-            # Deterministic action
+            # Action selection: deterministic (mean) or stochastic (sampled)
             with torch.no_grad():
-                obs_tensor = torch.FloatTensor(obs).to(device)
-                action = policy(obs_tensor).cpu().numpy()
+                obs_tensor = torch.FloatTensor(obs).unsqueeze(0).to(device)  # Add batch dimension
+                mean_action = policy(obs_tensor).squeeze(0)  # Keep on device for distribution
+                
+                if stochastic:
+                    # Sample from distribution (training-like)
+                    dist = MultivariateNormal(mean_action, cov_mat)
+                    action_tensor = dist.sample()
+                    
+                    # Clamp to valid ranges
+                    action_clamped = torch.stack([
+                        torch.clamp(action_tensor[0], 0, 1),  # linear
+                        torch.clamp(action_tensor[1], -1, 1)  # angular
+                    ])
+                    action_raw = action_clamped.cpu().numpy()
+                    
+                    # Track distribution params for diagnosis
+                    if print_actions and ep_length < 50:
+                        mean_np = mean_action.cpu().numpy()
+                        sampled_np = action_tensor.cpu().numpy()
+                else:
+                    # Deterministic: use mean
+                    action_raw = mean_action.cpu().numpy()
+            
+            # The actor outputs: linear in [0,1], angular in [-1,1]
+            # These are already the correct ranges, no further scaling needed before env.step
+            action = action_raw.copy()
+            
+            # Compute cmd_vel (env divides linear by 4, which equals *0.25)
+            cmd_vel_linear = action[0] / 4  # This is what env.step does
+            cmd_vel_angular = action[1]
+            
+            # Track actions for statistics
+            all_actions_linear.append(action[0])
+            all_actions_angular.append(action[1])
+            all_cmd_vel_linear.append(cmd_vel_linear)
+            all_cmd_vel_angular.append(cmd_vel_angular)
+            
+            # Print diagnostic info for first 50 steps of first episode
+            if print_actions and ep_length < 50:
+                if ep_length < 5 or ep_length % 10 == 0:
+                    if stochastic:
+                        print(f"Step {ep_length:3d}: mean=[{mean_np[0]:.6f}, {mean_np[1]:.6f}] "
+                              f"sampled=[{sampled_np[0]:.6f}, {sampled_np[1]:.6f}] "
+                              f"clamped=[{action[0]:.6f}, {action[1]:.6f}] → "
+                              f"cmd_vel=[{cmd_vel_linear:.6f} m/s, {cmd_vel_angular:.6f} rad/s]", flush=True)
+                    else:
+                        print(f"Step {ep_length:3d}: action=[{action[0]:.6f}, {action[1]:.6f}] → "
+                              f"cmd_vel=[{cmd_vel_linear:.6f} m/s, {cmd_vel_angular:.6f} rad/s]", flush=True)
             
             # Get current position for path length
             curr_pos = np.array([env.position.x, env.position.y])
@@ -365,20 +469,53 @@ def evaluate(env, hyperparameters, actor_model, critic_model, num_episodes):
             print(f"Evaluated {ep+1}/{num_episodes} episodes", flush=True)
     
     # Print summary
-    print("\n" + "="*60, flush=True)
+    print("\n" + "="*80, flush=True)
     print("EVALUATION SUMMARY", flush=True)
-    print("="*60, flush=True)
+    print("="*80, flush=True)
+    print(f"Checkpoint: {os.path.basename(actor_model)}", flush=True)
     print(f"Method: {method_name}", flush=True)
     print(f"Episodes: {num_episodes}", flush=True)
-    print(f"Success Rate: {metrics['success']/num_episodes*100:.2f}%", flush=True)
-    print(f"Collision Rate: {metrics['collision']/num_episodes*100:.2f}%", flush=True)
-    print(f"Timeout Rate: {metrics['timeout']/num_episodes*100:.2f}%", flush=True)
-    print(f"Mean Episode Length: {np.mean(metrics['lengths']):.2f} ± {np.std(metrics['lengths']):.2f}", flush=True)
-    print(f"Mean Return: {np.mean(metrics['returns']):.2f} ± {np.std(metrics['returns']):.2f}", flush=True)
-    print(f"Mean Path Length: {np.mean(metrics['path_lengths']):.2f} ± {np.std(metrics['path_lengths']):.2f}", flush=True)
-    print(f"Mean Episode Time: {np.mean(metrics['times']):.2f}s ± {np.std(metrics['times']):.2f}s", flush=True)
-    print(f"Results saved to: {eval_csv_path}", flush=True)
-    print("="*60, flush=True)
+    print(f"\nOutcomes:", flush=True)
+    print(f"  Success Rate:   {metrics['success']/num_episodes*100:.2f}% ({metrics['success']}/{num_episodes})", flush=True)
+    print(f"  Collision Rate: {metrics['collision']/num_episodes*100:.2f}% ({metrics['collision']}/{num_episodes})", flush=True)
+    print(f"  Timeout Rate:   {metrics['timeout']/num_episodes*100:.2f}% ({metrics['timeout']}/{num_episodes})", flush=True)
+    print(f"\nEpisode Metrics:", flush=True)
+    print(f"  Mean Episode Length: {np.mean(metrics['lengths']):.2f} ± {np.std(metrics['lengths']):.2f}", flush=True)
+    print(f"  Mean Return: {np.mean(metrics['returns']):.2f} ± {np.std(metrics['returns']):.2f}", flush=True)
+    print(f"  Mean Path Length: {np.mean(metrics['path_lengths']):.2f} ± {np.std(metrics['path_lengths']):.2f} m", flush=True)
+    print(f"  Mean Episode Time: {np.mean(metrics['times']):.2f}s ± {np.std(metrics['times']):.2f}s", flush=True)
+    
+    # Action statistics for diagnosis
+    print(f"\nAction Statistics (all {len(all_actions_linear)} steps):", flush=True)
+    print(f"  Linear velocity (network output [0,1]):", flush=True)
+    print(f"    Mean: {np.mean(all_actions_linear):.6f}", flush=True)
+    print(f"    Std:  {np.std(all_actions_linear):.6f}", flush=True)
+    print(f"    Min:  {np.min(all_actions_linear):.6f}", flush=True)
+    print(f"    Max:  {np.max(all_actions_linear):.6f}", flush=True)
+    print(f"    Fraction < 0.01: {np.mean(np.array(all_actions_linear) < 0.01)*100:.2f}%", flush=True)
+    
+    print(f"\n  CMD_VEL Linear (m/s, after /4 scaling):", flush=True)
+    print(f"    Mean: {np.mean(all_cmd_vel_linear):.6f} m/s", flush=True)
+    print(f"    Std:  {np.std(all_cmd_vel_linear):.6f} m/s", flush=True)
+    print(f"    Min:  {np.min(all_cmd_vel_linear):.6f} m/s", flush=True)
+    print(f"    Max:  {np.max(all_cmd_vel_linear):.6f} m/s", flush=True)
+    print(f"    Fraction > 0.02: {np.mean(np.array(all_cmd_vel_linear) > 0.02)*100:.2f}% (meaningful motion)", flush=True)
+    print(f"    Fraction > 0.10: {np.mean(np.array(all_cmd_vel_linear) > 0.10)*100:.2f}% (strong motion)", flush=True)
+    
+    print(f"\n  Angular velocity (network output [-1,1]):", flush=True)
+    print(f"    Mean: {np.mean(all_actions_angular):.6f}", flush=True)
+    print(f"    Std:  {np.std(all_actions_angular):.6f}", flush=True)
+    print(f"    Min:  {np.min(all_actions_angular):.6f}", flush=True)
+    print(f"    Max:  {np.max(all_actions_angular):.6f}", flush=True)
+    
+    print(f"\n  CMD_VEL Angular (rad/s, no scaling):", flush=True)
+    print(f"    Mean(abs): {np.mean(np.abs(all_cmd_vel_angular)):.6f} rad/s", flush=True)
+    print(f"    Std:  {np.std(all_cmd_vel_angular):.6f} rad/s", flush=True)
+    print(f"    Fraction |w| > 0.2: {np.mean(np.abs(all_cmd_vel_angular) > 0.2)*100:.2f}% (turning)", flush=True)
+    print(f"    Fraction |w| > 0.5: {np.mean(np.abs(all_cmd_vel_angular) > 0.5)*100:.2f}% (strong turning)", flush=True)
+    
+    print(f"\nResults saved to: {eval_csv_path}", flush=True)
+    print("="*80 + "\n", flush=True)
 
 def makepath(desired_path, isfile=False):
     '''
@@ -638,7 +775,8 @@ def main(args):
     if args.eval:
         # Evaluation mode
         evaluate(env=env, hyperparameters=hyperparameters, actor_model=args.actor_model, 
-                 critic_model=args.critic_model, num_episodes=args.eval_episodes)
+                 critic_model=args.critic_model, num_episodes=args.eval_episodes, 
+                 stochastic=args.eval_stochastic)
     elif args.visualize_sampler > 0:
         # Sampler visualization mode (no training)
         visualize_sampler_mode(args)

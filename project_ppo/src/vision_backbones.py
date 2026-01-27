@@ -11,6 +11,37 @@ import numpy as np
 from typing import Tuple, Callable
 
 
+def get_backbone_feat_dim(name: str) -> int:
+    """
+    Get output feature dimension for a backbone without loading the model.
+    
+    Args:
+        name: Backbone identifier (mobilenet_v2, resnet18, resnet34, resnet50, 
+              clip_vit_b32, dinov2_vits14, dinov2_vitb14, dinov2_vitl14, dinov2_vitg14)
+    
+    Returns:
+        feat_dim: Output feature dimension
+    """
+    name = name.lower()
+    
+    feat_dims = {
+        'mobilenet_v2': 1280,
+        'resnet18': 512,
+        'resnet34': 512,
+        'resnet50': 2048,
+        'clip_vit_b32': 512,
+        'dinov2_vits14': 384,
+        'dinov2_vitb14': 768,
+        'dinov2_vitl14': 1024,
+        'dinov2_vitg14': 1536,
+    }
+    
+    if name not in feat_dims:
+        raise ValueError(f"Unknown backbone: {name}. Available: {list(feat_dims.keys())}")
+    
+    return feat_dims[name]
+
+
 def get_backbone(name: str, device: torch.device) -> Tuple[nn.Module, int, Callable]:
     """
     Get a frozen vision backbone with preprocessing function.

@@ -26,6 +26,8 @@ def get_args():
         parser.add_argument('--run_name', dest='run_name', type=str, default=None)  # standardized run name (overrides method_name)
         parser.add_argument('--eval', dest='eval', action='store_true', default=False)     # evaluation mode flag
         parser.add_argument('--eval_episodes', dest='eval_episodes', type=int, default=100)  # number of episodes for evaluation
+        parser.add_argument('--eval_stochastic', dest='eval_stochastic', action='store_true', default=False,
+                            help='Use stochastic action sampling in eval (training-like) instead of deterministic mean')
         parser.add_argument('--output_dir', dest='output_dir', type=str, default=None)     # base output directory for runs
         parser.add_argument('--load_config', dest='load_config', type=str, default=None)   # load config from baseline run (path to config.yml)
         parser.add_argument('--runs_root', dest='runs_root', type=str, default='runs')     # runs directory name (default: runs, test: runs_test)
