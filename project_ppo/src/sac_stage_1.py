@@ -12,7 +12,7 @@ import torch
 import rospy
 
 from sac import SAC
-from environment_new import Env
+from environment_small_house import Env  # Small house environment
 
 
 # Simple action space class for SAC
@@ -34,12 +34,14 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 def train():
     """Train SAC agent."""
-    rospy.init_node('sac_stage_1')
-    env = Env(is_training=True)
+    rospy.init_node('sac_stage_1_small_house_10k')
+    env = Env(is_training=True)  # Use small house environment
     
     print(f"[SAC] Device: {device}")
     print(f"[SAC] State dim: {STATE_DIM}, Action dim: {ACTION_DIM}")
     print(f"[SAC] Action bounds: linear [0, {ACTION_LINEAR_MAX}], angular [{-ACTION_ANGULAR_MAX}, {ACTION_ANGULAR_MAX}]")
+    print(f"[SAC] Environment: Small House (10k timesteps)")
+    print(f"[SAC] Curriculum: 0.1m increment every 500 successes")
     
     # Define action space (linear [0, 1], angular [-1, 1])
     action_space = ActionSpace(
@@ -66,13 +68,13 @@ def train():
     )
     
     # Training parameters
-    max_timesteps = 500000
+    max_timesteps = 10000  # Changed from 500000 to 10000 for test
     max_episode_steps = 500
     start_timesteps = 1000
     update_after = 1000
     update_every = 50
-    save_freq = 10000
-    save_dir = 'models/sac'
+    save_freq = 5000  # Save at 5k and 10k
+    save_dir = 'models/sac_small_house_10k'
     os.makedirs(save_dir, exist_ok=True)
     
     episode_num = 0
@@ -82,11 +84,13 @@ def train():
     collision_count = 0
     
     print(f"[SAC] Training for {max_timesteps} timesteps")
+    print(f"[SAC] Saving models to: {save_dir}")
     
     while total_timesteps < max_timesteps:
         episode_num += 1
         episode_reward = 0
         episode_steps = 0
+        episode_successes = 0  # track successes inside this episode
         done = False
         
         state = env.reset()
@@ -132,20 +136,22 @@ def train():
                 save_path = os.path.join(save_dir, f'sac_{total_timesteps}.pth')
                 agent.save(save_path)
             
+            # Track successes during the episode (environment continues after success)
             if arrive:
                 success_count += 1
-                done = True
-            elif done:
+                episode_successes += 1
+            # Track collisions which end the episode
+            if done:
                 collision_count += 1
         
         episode_rewards.append(episode_reward)
         avg_reward = np.mean(episode_rewards[-100:])
-        success_rate = success_count / min(episode_num, 100)
+        success_rate = success_count / max(1, episode_num)  # successes per episode (avg)
         
-        status = "SUCCESS" if arrive else "COLLISION" if done else "TIMEOUT"
+        status = f"SUCCESS x{episode_successes}" if episode_successes > 0 else ("COLLISION" if done else "TIMEOUT")
         print(f"[Ep {episode_num}] {status} | Steps: {episode_steps} | "
               f"Reward: {episode_reward:.1f} | Avg: {avg_reward:.1f} | "
-              f"Success: {success_rate:.2%} | Total: {total_timesteps}")
+              f"Total Success: {success_count} ({success_rate:.2f}/ep) | Total: {total_timesteps}")
         
         if episode_num % 100 == 0:
             success_count = 0

@@ -265,7 +265,7 @@ class SAC:
             checkpoint['alpha_optimizer_state_dict'] = self.alpha_optimizer.state_dict()
         
         torch.save(checkpoint, filename)
-        print(f"[SAC] Model saved to {filename}")
+        # print(f"[SAC] Model saved to {filename}")
     
     def load(self, filename):
         """

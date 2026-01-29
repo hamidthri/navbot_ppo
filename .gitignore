@@ -108,3 +108,18 @@ venv.bak/
 .mypy_cache/
 .idea/
 project_ppo/src/models/
+*.pth
+*.txt
+*.png
+
+# Exclude staged training files (keep instruction.md)
+TRAINING_RUNS/
+project_ppo/src/analyze_learning.py
+project_ppo/src/visualize_results.py
+project_ppo/src/logs/.nfs*
+project_ppo/src/sac_gru.py
+project_ppo/src/sac_gru_stage_1.py
+project_ppo/src/sac_networks_gru.py
+turtlebot3_simulations/turtlebot3_gazebo/launch/turtlebot3_stage_new.launch
+
+project_ppo/src/sac_vision/*
