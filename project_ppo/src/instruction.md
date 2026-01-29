@@ -1,0 +1,611 @@
+# End-to-end Motion Planner Using Proximal Policy Optimization (PPO) in Gazebo
+
+The goal is to use deep reinforcement learning algorithms, specifically Proximal Policy Optimization (PPO), to control a mobile robot (TurtleBot) to avoid obstacles while navigating towards a target.
+
+**Goal:** Enable the robot (TurtleBot) to navigate to the target (enter the yellow circle).
+
+---
+
+```bash
+cd /is/ps2/otaheri/hamid/navbot_ppo/project_ppo/scripts && ./train_hub.sh --gazebo_gui --method_name fusion_smoke_resnet_gui --max_timesteps 600 --timesteps_per_episode 60 --steps_per_iteration 120 --reward_type fuzzy3 --sampler_mode rect_regions --distance_uniform --use_vision true --vision_backbone resnet18 --vision_proj_dim 64 2>&1 > /tmp/fusion_resnet_run2.log &
+```
+
+```bash
+cd /is/ps2/otaheri/hamid/navbot_ppo/project_ppo/scripts && ./train_hub.sh --gazebo_gui --method_name fusion_smoke_dinov2_gui --max_timesteps 300 --timesteps_per_episode 50 --steps_per_iteration 100 --reward_type fuzzy3 --sampler_mode rect_regions --distance_uniform --use_vision true --vision_backbone dinov2_vits14 --vision_proj_dim 128 --architecture vit_film_tokenlearner 2>&1 > /tmp/fusion_dinov2_token.log &
+
+```
+
+## 🐳 **Running on Ubuntu 24.04? Use Docker!**
+
+ROS1 cannot be installed natively on Ubuntu 24.04. We provide a complete **Docker setup with browser-accessible Gazebo GUI**.
+
+**🚀 Quick Start (3 steps):**
+
+```bash
+# 1. Install Docker
+./setup_docker.sh
+# (Then log out and back in)
+
+# 2. Build and run
+./quick_start.sh
+
+# 3. Open browser
+# Go to: http://localhost:6080
+# Run: roslaunch turtlebot3_gazebo turtlebot3_stage_1.launch
+# Then: roslaunch project ppo_stage_1.launch
+```
+
+**📖 See [QUICKSTART.md](QUICKSTART.md) for detailed Docker instructions.**
+
+---
+
+## 🏠 **AWS RoboMaker Small House World**
+
+Train your navigation agent in a **realistic indoor house environment** with multiple rooms and furniture.
+
+**Quick Commands:**
+```bash
+# View with GUI (inside container)
+export DISPLAY=:1
+export TURTLEBOT3_MODEL=burger
+roslaunch project navbot_small_house.launch gui:=true
+
+# Headless for training
+roslaunch project navbot_small_house.launch gui:=false
+```
+
+**Features:** Realistic house layout • Compatible with existing PPO code • All sensors working (camera publisher: `/gazebo`) • Same 16-D observation
+
+---
+
+### Demo GIF
+
+Watch a demonstration of our mapless motion planner in action (3x):
+
+![Demo GIF](demo/video.gif)
+
+### Introduction
+
+## Advancements in Technology and Service Robots
+
+As technology progresses, the integration of service robots into our daily lives is becoming increasingly common. Service robots incorporate a multitude of key technologies from various fields, including mobile navigation, system control, mechanism modules, vision modules, voice modules, artificial intelligence, and other related technical fields. This research is particularly focused on developing indoor robot navigation techniques.
+
+## Project Overview: Learning-Based Mapless Motion Planner
+
+In this project, we introduce a learning-based mapless motion planner that utilizes sparse laser signals and the target's position in the robot frame (i.e., relative distance and angles) as inputs. This approach generates continuous steering commands as outputs, eliminating the need for traditional mapping methods like SLAM (Simultaneous Localization and Mapping). This innovative planner is capable of navigating without prior maps and can adapt to new environments it has never encountered before.
+
+Our approach is inspired by advancements in reinforcement learning for robotic navigation, as detailed in our paper ["Reinforcement Learning Based Mapless Navigation in Dynamic Environments Using LiDAR" (arXiv:2405.16266)](https://arxiv.org/abs/2405.16266). This paper demonstrates the efficacy of deep reinforcement learning techniques in enabling robots to navigate complex, dynamic environments without relying on pre-built maps.
+
+### Input Specifications (State):
+
+The input features, forming a 16-dimensional state, include:
+
+1. **Laser Finding (10 Dimensions)** - Represents sparse laser measurements.
+2. **Past Action (2 Dimensions)**:
+   - Linear velocity
+   - Angular velocity
+3. **Target Position in Robot Frame (2 Dimensions)**:
+   - Relative distance
+   - Relative angle (using polar coordinates)
+4. **Robot Yaw Angular (1 Dimension)** - Indicates the robot's current yaw angle.
+5. **Degrees to Face the Target (1 Dimension)** - The absolute difference between the yaw and the relative angle to the target.
+
+### Normalization of Inputs:
+
+Normalization is applied to the inputs to facilitate learning by scaling all values to a consistent range:
+
+1. **Laser Finding** - Divided by the maximum laser finding range.
+2. **Past Action** - Retained as original values.
+3. **Target Position in Robot Frame**:
+   - Relative distance normalized by the diagonal length of the map.
+   - Relative angle normalized by 360 degrees.
+4. **Robot Yaw Angular** - Normalized by 360 degrees.
+5. **Degrees to Face the Target** - Normalized by 180 degrees.
+
+### Output Specifications (Action):
+
+The outputs, forming a 2-dimensional action, consist of:
+
+1. **Linear Velocity (1 Dimension)** - Ranging from 0 to 0.25 meters per second.
+2. **Angular Velocity (1 Dimension)** - Ranging from -0.5 to 0.5 radians per second.
+
+
+## Reward System
+- **Arrive at the target**: +120
+- **Hit the wall**: -100
+- **Move towards target**: 500 * (Past relative distance - Current relative distance)
+
+## Algorithm
+- **Proximal Policy Optimization (PPO)** using Actor and Critic methods, implemented with PyTorch.
+
+## Training Environment
+- **Gazebo**: A robot simulation environment, managed via Neotic and PyTorch for enhanced machine learning capabilities.
+
+### Installation Dependencies:
+
+1. **Python3**
+2. **PyTorch**:
+   ```bash
+   pip3 install torch torchvision
+
+3) ROS noetic
+
+> http://wiki.ros.org/noetic/Installation/Ubuntu
+
+4) Gazebo7 (When you install ros kinetic it also install gazebo7)
+
+> http://gazebosim.org/tutorials?cat=install&tut=install_ubuntu&ver=7.0
+
+
+# Installation
+
+## Option 1: Docker Setup (Recommended for Ubuntu 24.04)
+
+**For Ubuntu 24.04 users:** Since ROS1 cannot be installed natively on Ubuntu 24, use the Docker setup with browser-based Gazebo GUI.
+
+📖 **See [DOCKER_SETUP.md](DOCKER_SETUP.md) for complete Docker installation and usage instructions.**
+
+**Quick Start:**
+```bash
+# Build and start container
+docker compose up -d
+
+# Access container
+docker exec -it navbot-ppo bash
+
+# Open browser to http://localhost:6080 to view Gazebo GUI
+
+# Inside container - Terminal 1:
+roslaunch turtlebot3_gazebo turtlebot3_stage_1.launch
+
+# Inside container - Terminal 2:
+roslaunch project ppo_stage_1.launch
+```
+
+## Option 2: Native Installation (Ubuntu 20.04 only)
+
+# Create and Initialize the Workspace
+```bash
+cd
+mkdir -p catkin_ws/src && cd catkin_ws/src
+git clone https://github.com/hamidthri/navbot_ppo.git project
+git clone https://github.com/hamidthri/turtlebot3
+git clone https://github.com/hamidthri/turtlebot3_msgs
+git clone https://github.com/hamidthri/turtlebot3_simulations
+cd ..
+catkin_make
+```
+
+# Configure Environment
+```bash
+echo "export TURTLEBOT3_MODEL=burger" >> ~/.bashrc
+echo "source /home/'Enter your user name'/catkin_ws/devel/setup.bash" >> ~/.bashrc
+source ~/.bashrc
+```
+
+---
+
+## 🐋 Docker Development Setup
+
+For development where you want to see code changes immediately on your host machine, use a bind-mounted container:
+
+### One-Time Host Setup (Linux)
+
+```bash
+# Allow X11 forwarding for Gazebo GUI
+xhost +local:root
+
+# To revert later (after stopping container):
+# xhost -local:root
+```
+
+### Running Development Container with Bind Mount
+
+```bash
+# From your repo root
+docker run -it --rm \
+  --name navbot-ppo-dev \
+  --net=host \
+  -e DISPLAY=:1 \
+  -e GAZEBO_PLUGIN_PATH=/opt/ros/noetic/lib:/usr/lib/x86_64-linux-gnu/gazebo-11/plugins \
+  -e LD_LIBRARY_PATH=/opt/ros/noetic/lib:/usr/lib/x86_64-linux-gnu/gazebo-11/plugins:${LD_LIBRARY_PATH} \
+  -v /tmp/.X11-unix:/tmp/.X11-unix:rw \
+  -v $(pwd):/root/catkin_ws/src:rw \
+  navbot-ppo:latest \
+  bash
+```
+
+**Important Notes:**
+- `DISPLAY=:1` - Adjust to match your X server (check `/tmp/.X11-unix/`)
+- Bind mount creates live sync between host and container
+- Changes in your IDE on host appear immediately in container
+- `GAZEBO_PLUGIN_PATH` and `LD_LIBRARY_PATH` are **required** for camera plugins
+
+### Inside Container
+
+```bash
+# Source ROS environment
+source /opt/ros/noetic/setup.bash
+cd /root/catkin_ws
+catkin_make
+source devel/setup.bash
+
+# Launch training world with robot camera
+roslaunch turtlebot3_gazebo turtlebot3_stage_1.launch
+
+# In another terminal (docker exec -it navbot-ppo-dev bash)
+cd /root/catkin_ws/src/project_ppo/src
+python3 main.py --method_name my_experiment
+```
+
+---
+
+## �️ Show Gazebo GUI (For Running Container)
+
+If your container is already running with `gzserver` (headless) and you want to **see the Gazebo GUI** during training rollouts:
+
+### Prerequisites
+1. **X11 socket must be mounted** in container: `-v /tmp/.X11-unix:/tmp/.X11-unix:rw`
+2. **Host X server must allow connections** from container
+
+### Steps to Enable GUI
+
+**On Host (One-Time):**
+```bash
+# Allow X connections from Docker container
+xhost +local:root
+
+# Verify host DISPLAY (should match socket in /tmp/.X11-unix/)
+echo $DISPLAY  # Example output: :1
+ls /tmp/.X11-unix/  # Should show X1 socket
+```
+
+**Inside Container:**
+```bash
+# Verify gzserver is running (headless)
+ps aux | grep gzserver | grep -v grep
+
+# Start gzclient with matching DISPLAY
+export DISPLAY=:1  # Match your host DISPLAY value
+gzclient --verbose &
+
+# Expected output:
+# [Msg] Waiting for master.
+# [Msg] Connected to gazebo master @ http://127.0.0.1:11345
+```
+
+### Verification
+- **gzclient CPU usage should be high (200-400%)** - indicates active rendering
+- Gazebo GUI window should appear on your host display
+- You can now watch the robot navigate in real-time during training
+
+### Performance Note
+⚠️ **gzclient GUI causes significant CPU usage** (300-600% typical). This is normal but may slow down training. If training performance is critical, keep Gazebo headless and visualize using saved models/videos instead.
+
+### Troubleshooting GUI
+| Issue | Solution |
+|-------|----------|
+| No GUI window appears | Check `xhost +local:root` was run on host |
+| "cannot open display" | Verify `DISPLAY` matches host (`echo $DISPLAY` on host) |
+| X socket not found | Container needs `-v /tmp/.X11-unix:/tmp/.X11-unix:rw` mount |
+| OpenGL errors (libGL) | Warnings are OK if gzclient connects to master |
+
+---
+
+## 🎨 Modular Vision Backbones
+
+The system supports **plug-in vision encoders** for feature extraction with frozen weights.
+
+### Supported Backbones
+
+| Backbone | Params | Feature Dim | Use Case |
+|----------|--------|-------------|----------|
+| `mobilenet_v2` | 2.2M | 1280 | Fast, lightweight (default) |
+| `resnet18` | 11.2M | 512 | Balanced speed/quality |
+| `resnet34` | 21.3M | 512 | Better features, slower |
+| `resnet50` | 23.5M | 2048 | High-capacity, slowest |
+| `clip_vit_b32` | - | 512 | Requires `pip install open-clip-torch` |
+
+### CLI Usage
+
+```bash
+# Train with different backbones
+python3 main.py --method_name my_exp \
+  --vision_backbone mobilenet_v2 \
+  --vision_proj_dim 64
+
+# Available options
+--vision_backbone {mobilenet_v2,resnet18,resnet34,resnet50,clip_vit_b32}
+--vision_proj_dim 64  # Projection dimension (default: 64)
+```
+
+### Architecture
+
+```
+Camera Image (RGB)
+  ↓
+Frozen Backbone (e.g., MobileNetV2)  ← NOT trainable
+  ↓
+Vision Features (e.g., 1280-d)
+  ↓
+Trainable ProjectionMLP (256 hidden)  ← Trainable
+  ↓
+Projected Features (64-d)
+  ↓
+Concatenate with Base State (16-d LiDAR+pose)
+  ↓
+Fused State (80-d)
+  ↓
+Trainable Residual MLP Policy/Value  ← Trainable
+```
+
+**Key Design:**
+- **Frozen backbone** preserves pre-trained ImageNet features
+- **Trainable projection** adapts vision to navigation task
+- **Base state (16-d)** unchanged: 10 LiDAR + 2 past_action + 4 goal/pose
+
+### Validation
+
+Test the vision system without training:
+```bash
+# Inside container
+cd /root/catkin_ws/src/project_ppo/src
+python3 validate_vision_system.py
+```
+
+---
+
+## 🧱 Brick Wall Textures
+
+All custom world files now use **Gazebo/Bricks** material for improved visual features:
+- `train_world1.world` ✅
+- `train_world_new.world` ✅  
+- `maze0.world` ✅
+
+Walls are visually distinct (brick texture) instead of flat grey, providing richer camera inputs for vision-based training.
+
+**Files:** `turtlebot3_simulations/turtlebot3_gazebo/worlds/*.world`
+
+---
+
+## � Gazebo Camera Troubleshooting
+
+The robot uses a **real Gazebo camera plugin** for vision-based training. If you encounter issues:
+
+### Symptoms
+- No `/robot_camera/image_raw` topic
+- Error: "Unable to create CameraSensor. Rendering is disabled"
+- Plugin not loading: "libCameraPlugin.so: cannot open shared object file"
+
+### Diagnostic Steps
+
+**1. Check Environment Variables**
+```bash
+# Inside container
+echo $DISPLAY                    # Should be :1 (or match your X server)
+echo $GAZEBO_PLUGIN_PATH        # Should include /opt/ros/noetic/lib and gazebo-11 plugins
+echo $LD_LIBRARY_PATH           # Should include plugin paths
+```
+
+**2. Verify Plugin Dependencies**
+```bash
+# Check if camera plugin can find all dependencies
+export LD_LIBRARY_PATH=/opt/ros/noetic/lib:/usr/lib/x86_64-linux-gnu/gazebo-11/plugins:$LD_LIBRARY_PATH
+ldd /opt/ros/noetic/lib/libgazebo_ros_camera.so | grep "not found"
+
+# Should show nothing. If you see "not found", the paths are incorrect.
+```
+
+**3. Check Camera Topic**
+```bash
+source /opt/ros/noetic/setup.bash
+
+# List camera topics (should see /robot_camera/image_raw)
+rostopic list | grep camera
+
+# Verify publisher is Gazebo (NOT fake_camera_publisher)
+rostopic info /robot_camera/image_raw
+# Output should show: Publishers: * /gazebo (http://...)
+
+# Check publishing rate (~8-10 Hz)
+rostopic hz /robot_camera/image_raw
+```
+
+**4. Check Gazebo Logs**
+```bash
+# Look for camera/rendering errors
+find ~/.ros/log -name "gazebo*.log" -mmin -5 | xargs grep -i "camera\|render\|plugin"
+```
+
+### Required Environment Variables (Fix)
+
+If camera is not working, ensure these are set **before launching Gazebo**:
+
+```bash
+export DISPLAY=:1  # Match your X server socket in /tmp/.X11-unix/
+export GAZEBO_PLUGIN_PATH=/opt/ros/noetic/lib:/usr/lib/x86_64-linux-gnu/gazebo-11/plugins
+export LD_LIBRARY_PATH=/opt/ros/noetic/lib:/usr/lib/x86_64-linux-gnu/gazebo-11/plugins:$LD_LIBRARY_PATH
+```
+
+### Launch File Requirements
+
+In your Gazebo launch file (e.g., `turtlebot3_stage_1.launch`), ensure:
+```xml
+<arg name="headless" value="false"/>  <!-- NOT true! Camera needs rendering -->
+<arg name="gui" value="false"/>       <!-- Can be false, but headless must be false -->
+```
+
+### Save and Verify a Camera Frame
+
+```bash
+# Inside container with ROS running
+cd /root/catkin_ws/src/project_ppo/src
+python3 << 'EOF'
+import rospy
+from sensor_msgs.msg import Image
+import numpy as np
+from PIL import Image as PILImage
+
+rospy.init_node('save_frame', anonymous=True)
+frame = None
+
+def cb(msg):
+    global frame
+    if frame is None:
+        frame = msg
+        arr = np.frombuffer(msg.data, dtype=np.uint8).reshape((msg.height, msg.width, 3))
+        PILImage.fromarray(arr, 'RGB').save('/tmp/camera_test.png')
+        print(f'Saved {msg.width}x{msg.height} frame')
+        rospy.signal_shutdown('done')
+
+rospy.Subscriber('/robot_camera/image_raw', Image, cb)
+rospy.spin()
+EOF
+
+# Copy to host
+exit  # exit container
+docker cp navbot-ppo-dev:/tmp/camera_test.png ./camera_test.png
+```
+
+### Common Issues & Solutions
+
+| Issue | Cause | Solution |
+|-------|-------|----------|
+| No camera topic | GAZEBO_PLUGIN_PATH not set | Export path before roslaunch |
+| "Rendering is disabled" | headless=true or DISPLAY wrong | Set headless=false, check DISPLAY |
+| libCameraPlugin.so not found | LD_LIBRARY_PATH missing gazebo plugins | Add /usr/lib/x86_64-linux-gnu/gazebo-11/plugins |
+| Topic exists but no messages | Camera sensor not attached to robot | Check URDF has camera_link + plugin |
+
+---
+
+## 🔧 Blockers and Fixes
+
+### 1. X Authorization Error After Container Restart
+
+**Symptom:**
+```
+Authorization required, but no authorization protocol specified
+Error: cannot open display: :1
+Aborted (core dumped)
+```
+
+**Fix:**
+Use `xvfb-run` to create a virtual display without authorization issues:
+```bash
+# Stop existing Gazebo
+pkill -9 gzserver gzclient
+
+# Launch with xvfb (no GUI, but camera still works)
+xvfb-run -a -s '-screen 0 1024x768x24' roslaunch turtlebot3_gazebo turtlebot3_stage_1.launch
+```
+
+**Why it works:** xvfb provides an isolated virtual X server that doesn't require xauth permissions.
+
+---
+
+### 2. Camera Plugin Prerequisites
+
+**Required Environment Variables:**
+```bash
+export GAZEBO_PLUGIN_PATH=/opt/ros/noetic/lib:/usr/lib/x86_64-linux-gnu/gazebo-11/plugins
+export LD_LIBRARY_PATH=/opt/ros/noetic/lib:/usr/lib/x86_64-linux-gnu/gazebo-11/plugins:$LD_LIBRARY_PATH
+```
+
+**Verify dependencies:**
+```bash
+ldd /opt/ros/noetic/lib/libgazebo_ros_camera.so | grep "not found"
+# Should be empty if paths are correct
+```
+
+**Launch requirements:**
+- `headless=false` or `headless=true` with xvfb
+- Camera plugin needs rendering context even without GUI
+
+---
+
+### 3. Target Flicker / Disappearing
+
+**Symptoms:**
+- Goal marker appears then disappears
+- Training episodes fail immediately
+- gzclient consuming 400%+ CPU
+
+**Root Causes:**
+1. `gzclient` (Gazebo GUI) causing CPU spike and Gazebo lag
+2. `reset_simulation` hanging when called while physics is paused
+
+**Fixes:**
+
+**A) Disable GUI in launch file:**
+```xml
+<!-- In turtlebot3_stage_1.launch -->
+<arg name="gui" value="false"/>
+<arg name="headless" value="true"/>
+```
+
+**B) Use reset_world instead of reset_simulation:**
+```python
+# In environment reset() - use lightweight reset
+self.reset_world()  # Instead of self.reset_proxy() which calls reset_simulation
+```
+
+**C) Remove pause around reset:**
+```python
+# OLD (causes hang):
+self.pause_proxy()
+self.reset_proxy()  # Hangs if physics paused
+self.unpause_proxy()
+
+# NEW (works):
+self.reset_world()  # No pause needed, doesn't hang
+```
+
+**Verify target stability:**
+```bash
+# After env.reset(), check target pose remains stable
+rostopic echo /gazebo/model_states | grep target -A3
+```
+
+---
+
+### 4. Evaluation Robustness
+
+**Ensure services/topics available before episodes:**
+```python
+# Wait for critical services
+rospy.wait_for_service('/gazebo/reset_world')
+rospy.wait_for_service('/gazebo/spawn_sdf_model')
+rospy.wait_for_service('/gazebo/delete_model')
+
+# Wait for critical topics
+rospy.wait_for_message('/scan', LaserScan, timeout=5)
+rospy.wait_for_message('/odom', Odometry, timeout=5)
+rospy.wait_for_message('/robot_camera/image_raw', Image, timeout=5)
+```
+
+**Eval with proper output structure:**
+```bash
+# Eval checkpoints use runs/<method>/checkpoints/ and runs/<method>/logs/
+python3 main.py --eval --eval_episodes 20 --method_name vision_mobilenet64_concat
+```
+
+---
+
+## 🚀 How to Run (Docker)
+
+### Prerequisites
+
+Ensure the Docker container `navbot-ppo` is running and Gazebo simulation is launched.
+
+### 1. Start Gazebo Simulation (Headless with Camera)
+
+Launch Gazebo with xvfb to avoid X authorization issues while maintaining camera functionality:
+
+```bash
+docker exec -d navbot-ppo bash -c "
+  export GAZEBO_PLUGIN_PATH=/opt/ros/noetic/lib:/usr/lib/x86_64-linux-gnu/gazebo-11/plugins &&
+  export LD_LIBRARY_PATH=/opt/ros/noetic/lib:/usr/lib/x86_64-linux-gnu/gazebo-11/plugins:\$LD_LIBRARY_PATH &&
+  source /opt/ros/noetic/setup.bash &&
+  source /root/catkin_ws/devel/setup.bash &&
+  xvfb-run -a -s '-screen 0 1024x768x24' roslaunch turtlebot3_gazebo turtlebot3_stage_1.launch
+"
