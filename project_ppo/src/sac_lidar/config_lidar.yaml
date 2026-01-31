@@ -1,0 +1,36 @@
+# LiDAR SAC Training Configuration
+
+# Training Parameters
+max_timesteps: 200000
+start_timesteps: 1000  # Random exploration steps
+update_after: 1000  # Start training after N steps
+update_every: 50  # Update every N steps
+batch_size: 256
+buffer_size: 1000000
+
+# SAC Hyperparameters
+hidden_dim: 256
+lr_actor: 0.0003
+lr_critic: 0.0003
+lr_alpha: 0.0003
+gamma: 0.99
+tau: 0.005
+automatic_entropy_tuning: true
+
+# Environment
+# Max episode steps calculation:
+# - Environment: 17m x 8m, diagonal = 18.8m
+# - Robot max speed: 0.25 m/s (linear_vel/4)
+# - Control frequency: ~5 Hz
+# - Minimum steps to cross diagonal: 18.8m / 0.25m/s * 5Hz = 376 steps
+# - With margin for turning/obstacles: 500+ steps recommended
+max_episode_steps: 800
+
+# Reward Function
+# Options: 'legacy' (original distance-based), 'lyapunov' (CLF+CBF based)
+reward_type: 'legacy'
+
+# Logging and Saving
+save_dir: 'models/sac_lidar'
+save_freq: 10000
+log_freq: 5000  # Print detailed logs every N timesteps

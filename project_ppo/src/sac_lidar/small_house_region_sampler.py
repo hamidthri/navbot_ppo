@@ -2,13 +2,13 @@
 """
 Region-based Position Sampler for Small House World
 
-Samples robot spawn positions and goal positions from predefined rectangular regions.
-Implements curriculum learning by gradually increasing the distance between robot and goal.
+Samples robot spawn positions (3 fixed points) and goal positions (random in regions).
+Uses probabilistic curriculum learning for goal distance distribution.
 """
 
 import numpy as np
 import random
-from typing import Tuple, List, Dict
+from typing import Tuple, Dict
 
 
 # Rectangular regions for open spaces in small house world
@@ -16,7 +16,7 @@ RECT_REGIONS = [
     {"id": 1, "name": "R1", "x": [2.78, 8.40], "y": [-4.40, -0.27]},
     {"id": 2, "name": "R2", "x": [-2.00, 2.78], "y": [-4.40, -3.46]},
     {"id": 3, "name": "R3", "x": [-2.02, 2.00], "y": [-0.27, 3.44]},
-    {"id": 4, "name": "R4", "x": [-1.90, 4.29], "y": [4.71, 5.18]},  # Long tail of T
+    {"id": 4, "name": "R4", "x": [-1.90, 4.29], "y": [4.71, 5.18]},
     {"id": 5, "name": "R5", "x": [-8.21, -3.03], "y": [-1.05, 1.00]},
     {"id": 6, "name": "R6", "x": [-8.85, -3.18], "y": [-3.60, -1.84]},
     {"id": 7, "name": "R7", "x": [-4.96, -3.90], "y": [-0.78, 2.40]},
@@ -29,12 +29,11 @@ RECT_REGIONS = [
 ]
 
 
-# Fixed robot spawn positions from 3 distant regions
-# Selected from regions that are far apart: R1 (southeast), R5 (west), R9 (northeast)
+# Fixed robot spawn positions (3 distant locations)
 ROBOT_SPAWN_POSITIONS = [
-    {"name": "SpawnA_R1", "x": 5.5, "y": -2.5, "region_id": 1},   # Region R1
-    {"name": "SpawnB_R5", "x": -5.5, "y": 0.0, "region_id": 5},   # Region R5
-    {"name": "SpawnC_R9", "x": 7.0, "y": 2.5, "region_id": 9},    # Region R9
+    {"name": "SpawnA_R1", "x": 5.5, "y": -2.5, "region_id": 1},   # Region R1 (southeast)
+    {"name": "SpawnB_R5", "x": -5.5, "y": 0.0, "region_id": 5},   # Region R5 (west)
+    {"name": "SpawnC_R9", "x": 7.0, "y": 2.5, "region_id": 9},    # Region R9 (northeast)
 ]
 
 
@@ -43,45 +42,49 @@ class SmallHouseRegionSampler:
     Sampler for robot and goal positions in small house world.
     
     Features:
-    - Samples from predefined rectangular regions
-    - Fixed robot spawn positions (3 distant locations)
-    - Curriculum learning: gradually increase distance between robot and goal
-    - Ensures valid positions within region boundaries
+    - Robot: 3 FIXED spawn positions (always same locations)
+    - Goals: Random positions within predefined regions
+    - Probabilistic curriculum: 50% close (1-3m), 30% medium (3-6m), 20% far (6+m)
     """
     
-    def __init__(self, 
-                 initial_distance=2.0, 
-                 max_distance=18.0,
-                 distance_increment=0.1,
-                 increment_every_n_episodes=500):
+    def __init__(self, initial_distance=2.0, max_distance=18.0, distance_increment=0.1, increment_every_n_episodes=500):
         """
-        Initialize sampler with curriculum learning parameters.
+        Initialize sampler with probabilistic curriculum.
         
         Args:
-            initial_distance (float): Starting distance between robot and goal (meters)
-            max_distance (float): Maximum distance threshold (meters)
-            distance_increment (float): Distance increase per curriculum step (meters)
-            increment_every_n_episodes (int): Increase distance every N successful episodes
+            initial_distance: Starting distance for curriculum (default: 2.0m)  
+            max_distance: Maximum distance for curriculum (default: 18.0m)
+            distance_increment: Distance increase per curriculum step (default: 0.1m)
+            increment_every_n_episodes: Episodes between curriculum updates (default: 500)
         """
         self.regions = RECT_REGIONS
         self.spawn_positions = ROBOT_SPAWN_POSITIONS
         
-        # Curriculum learning parameters
-        self.current_distance_threshold = initial_distance
+        # Curriculum parameters (for compatibility, but not used in probabilistic mode)
+        self.initial_distance = initial_distance
         self.max_distance = max_distance
         self.distance_increment = distance_increment
         self.increment_every_n_episodes = increment_every_n_episodes
         
-        # Episode tracking
+        # Probabilistic curriculum parameters
+        # 50% chance: 1-3m, 30% chance: 3-6m, 20% chance: 6+m
+        self.distance_ranges = [
+            {"min": 1.0, "max": 3.0, "prob": 0.5, "name": "close"},
+            {"min": 3.0, "max": 6.0, "prob": 0.3, "name": "medium"},
+            {"min": 6.0, "max": 18.0, "prob": 0.2, "name": "far"}
+        ]
+        
+        # Statistics tracking
         self.episode_count = 0
-        self.success_count = 0
+        self.goal_distance_stats = {"close": 0, "medium": 0, "far": 0}
         
         print(f"[SmallHouseRegionSampler] Initialized with {len(self.regions)} regions")
-        print(f"[SmallHouseRegionSampler] Robot spawn positions: {len(self.spawn_positions)} FIXED positions")
-        print(f"[SmallHouseRegionSampler] The robot will ALWAYS start from one of these 3 positions randomly")
-        print(f"[SmallHouseRegionSampler] Curriculum: start={initial_distance}m, max={max_distance}m, " +
-              f"increment={distance_increment}m every {increment_every_n_episodes} successes")
-        print(f"[SmallHouseRegionSampler] Will reach max distance after {int((max_distance - initial_distance) / distance_increment) * increment_every_n_episodes} successes")
+        print(f"[SmallHouseRegionSampler] Robot spawn: {len(self.spawn_positions)} FIXED positions")
+        print(f"[SmallHouseRegionSampler] Goal sampling: RANDOM within regions")
+        print(f"[SmallHouseRegionSampler] Probabilistic curriculum:")
+        print(f"  - 50% probability: 1-3m (close)")
+        print(f"  - 30% probability: 3-6m (medium)")
+        print(f"  - 20% probability: 6+m (far)")
     
     def sample_position_from_region(self, region: Dict) -> Tuple[float, float]:
         """
@@ -101,40 +104,55 @@ class SmallHouseRegionSampler:
         """
         Get a random robot spawn position from the 3 FIXED locations.
         
-        The robot will ALWAYS start from one of these 3 positions:
-        - SpawnA: Region R1 (southeast area)
-        - SpawnB: Region R5 (west area)  
-        - SpawnC: Region R9 (northeast area)
-        
-        These positions are far apart to ensure diverse training scenarios.
-        
         Returns:
             tuple: (x, y, name) coordinates and position name
         """
         spawn = random.choice(self.spawn_positions)
         return spawn["x"], spawn["y"], spawn["name"]
     
-    def get_goal_position(self, robot_x: float, robot_y: float, 
-                         min_distance: float = None) -> Tuple[float, float, str]:
+    def select_distance_range(self) -> Dict:
         """
-        Sample a goal position from regions based on current curriculum distance.
+        Select distance range based on probabilities.
+        50% close (1-3m), 30% medium (3-6m), 20% far (6+m)
+        
+        Returns:
+            dict: Selected distance range
+        """
+        # Generate random number [0, 1)
+        rand = random.random()
+        
+        # Cumulative probability selection
+        cumulative = 0.0
+        for range_config in self.distance_ranges:
+            cumulative += range_config["prob"]
+            if rand < cumulative:
+                return range_config
+        
+        # Fallback (should never happen)
+        return self.distance_ranges[-1]
+    
+    def get_goal_position(self, robot_x: float, robot_y: float) -> Tuple[float, float, str]:
+        """
+        Sample a goal position randomly within regions.
+        Distance from robot follows probabilistic curriculum.
         
         Args:
             robot_x (float): Robot's current x position
             robot_y (float): Robot's current y position
-            min_distance (float): Minimum distance from robot (default: current curriculum threshold)
             
         Returns:
             tuple: (x, y, region_name) coordinates and region name
         """
-        if min_distance is None:
-            min_distance = self.current_distance_threshold
+        # Select distance range based on probabilities
+        distance_range = self.select_distance_range()
+        min_distance = distance_range["min"]
+        max_distance = distance_range["max"]
+        range_name = distance_range["name"]
         
-        # Use a tighter range for more uniform sampling
-        # Instead of [min_distance, max_distance], use [min_distance, min_distance + 6.0]
-        # This ensures goals are within a reasonable range from the robot
-        max_distance_for_sample = min(min_distance + 6.0, self.max_distance)
+        # Track statistics
+        self.goal_distance_stats[range_name] += 1
         
+        # Try to find a goal within the selected distance range
         max_attempts = 100
         for attempt in range(max_attempts):
             # Sample random region
@@ -146,128 +164,117 @@ class SmallHouseRegionSampler:
             # Check distance
             distance = np.sqrt((goal_x - robot_x)**2 + (goal_y - robot_y)**2)
             
-            # Accept if within tighter curriculum range
-            if min_distance <= distance <= max_distance_for_sample:
+            # Accept if within selected range
+            if min_distance <= distance <= max_distance:
                 return goal_x, goal_y, region["name"]
         
-        # Fallback: try with wider range
+        # Fallback: relax constraints and try again
         for attempt in range(max_attempts):
             region = random.choice(self.regions)
             goal_x, goal_y = self.sample_position_from_region(region)
             distance = np.sqrt((goal_x - robot_x)**2 + (goal_y - robot_y)**2)
             
-            if min_distance <= distance <= self.max_distance:
+            # Accept if at least minimum distance (relax max constraint)
+            if distance >= min_distance:
                 return goal_x, goal_y, region["name"]
         
         # Last fallback: return any valid position
-        print(f"[Warning] Could not find goal within distance range after {max_attempts*2} attempts. " +
-              f"Using fallback position. Min: {min_distance:.1f}m, Max: {max_distance_for_sample:.1f}m")
         region = random.choice(self.regions)
         goal_x, goal_y = self.sample_position_from_region(region)
         return goal_x, goal_y, region["name"]
     
     def update_curriculum(self, success: bool):
         """
-        Update curriculum learning progress.
+        Update episode counter (curriculum is probabilistic, no changes needed).
         
         Args:
             success (bool): Whether the episode was successful
         """
         self.episode_count += 1
         
-        if success:
-            self.success_count += 1
-            
-            # Check if we should increase difficulty
-            if (self.success_count % self.increment_every_n_episodes == 0 and 
-                self.current_distance_threshold < self.max_distance):
+        # Print statistics every 100 episodes
+        if self.episode_count % 100 == 0:
+            total = sum(self.goal_distance_stats.values())
+            if total > 0:
+                close_pct = 100 * self.goal_distance_stats["close"] / total
+                medium_pct = 100 * self.goal_distance_stats["medium"] / total
+                far_pct = 100 * self.goal_distance_stats["far"] / total
                 
-                old_threshold = self.current_distance_threshold
-                self.current_distance_threshold = min(
-                    self.current_distance_threshold + self.distance_increment,
-                    self.max_distance
-                )
-                
-                print(f"\n[Curriculum] Distance threshold increased: " +
-                      f"{old_threshold:.1f}m → {self.current_distance_threshold:.1f}m " +
-                      f"(after {self.success_count} successes)\n")
-    
-    def get_current_distance_threshold(self) -> float:
-        """Get current curriculum distance threshold."""
-        return self.current_distance_threshold
+                print(f"\n[Curriculum Stats @ {self.episode_count} episodes]")
+                print(f"  Goal distance distribution:")
+                print(f"    Close (1-3m):  {close_pct:.1f}% ({self.goal_distance_stats['close']}/{total})")
+                print(f"    Medium (3-6m): {medium_pct:.1f}% ({self.goal_distance_stats['medium']}/{total})")
+                print(f"    Far (6+m):     {far_pct:.1f}% ({self.goal_distance_stats['far']}/{total})")
+                print()
     
     def get_stats(self) -> Dict:
         """Get sampler statistics."""
         return {
             "episode_count": self.episode_count,
-            "success_count": self.success_count,
-            "current_distance_threshold": self.current_distance_threshold,
-            "max_distance": self.max_distance,
+            "goal_distance_stats": self.goal_distance_stats.copy(),
         }
     
-    def reset_curriculum(self, initial_distance: float = 2.0):
-        """Reset curriculum to initial state."""
-        self.current_distance_threshold = initial_distance
+    def reset_stats(self):
+        """Reset statistics."""
         self.episode_count = 0
-        self.success_count = 0
-        print(f"[Curriculum] Reset to initial distance: {initial_distance}m")
-
-
-# Convenience functions
-def sample_robot_position() -> Tuple[float, float]:
-    """Sample a robot spawn position (for backward compatibility)."""
-    sampler = SmallHouseRegionSampler()
-    x, y, _ = sampler.get_robot_spawn_position()
-    return x, y
-
-
-def sample_goal_position(robot_x: float, robot_y: float, 
-                        distance_threshold: float = 2.0) -> Tuple[float, float]:
-    """Sample a goal position (for backward compatibility)."""
-    sampler = SmallHouseRegionSampler(initial_distance=distance_threshold)
-    x, y, _ = sampler.get_goal_position(robot_x, robot_y)
-    return x, y
+        self.goal_distance_stats = {"close": 0, "medium": 0, "far": 0}
+        print(f"[Curriculum] Statistics reset")
 
 
 if __name__ == "__main__":
     # Test the sampler
-    print("Testing SmallHouseRegionSampler...\n")
+    print("Testing SmallHouseRegionSampler with Probabilistic Curriculum...\n")
     
-    sampler = SmallHouseRegionSampler(initial_distance=2.0, max_distance=15.0)
+    sampler = SmallHouseRegionSampler()
     
     # Test robot spawn positions
-    print("=== Robot Spawn Positions ===")
+    print("=== Robot Spawn Positions (FIXED) ===")
     for i in range(5):
         x, y, name = sampler.get_robot_spawn_position()
         print(f"  Spawn {i+1}: ({x:.2f}, {y:.2f}) - {name}")
     
-    # Test goal sampling
-    print("\n=== Goal Sampling (from each spawn) ===")
+    # Test goal sampling from each spawn
+    print("\n=== Goal Sampling (Random in Regions) ===")
     for spawn in ROBOT_SPAWN_POSITIONS:
         robot_x, robot_y = spawn["x"], spawn["y"]
         print(f"\nRobot at {spawn['name']}: ({robot_x:.2f}, {robot_y:.2f})")
         
-        for i in range(3):
+        for i in range(5):
             goal_x, goal_y, region = sampler.get_goal_position(robot_x, robot_y)
             distance = np.sqrt((goal_x - robot_x)**2 + (goal_y - robot_y)**2)
-            print(f"  Goal {i+1}: ({goal_x:.2f}, {goal_y:.2f}) in {region}, distance={distance:.2f}m")
+            
+            # Determine range
+            if distance < 3.0:
+                range_name = "close"
+            elif distance < 6.0:
+                range_name = "medium"
+            else:
+                range_name = "far"
+            
+            # print(f"  Goal {i+1}: ({goal_x:.2f}, {goal_y:.2f}) in {region}, "
+            #       f"distance={distance:.2f}m ({range_name})")
     
-    # Test curriculum learning
-    print("\n=== Curriculum Learning ===")
-    sampler_curriculum = SmallHouseRegionSampler(
-        initial_distance=2.0, 
-        distance_increment=1.0, 
-        increment_every_n_episodes=5
-    )
+    # Test probabilistic distribution
+    print("\n=== Testing Probabilistic Distribution (1000 samples) ===")
+    sampler_test = SmallHouseRegionSampler()
     
-    for i in range(20):
-        success = (i % 2 == 0)  # Simulate 50% success rate
-        sampler_curriculum.update_curriculum(success)
-        
-        if i % 5 == 0:
-            stats = sampler_curriculum.get_stats()
-            print(f"Episode {stats['episode_count']}: " +
-                  f"Successes={stats['success_count']}, " +
-                  f"Distance={stats['current_distance_threshold']:.1f}m")
+    robot_x, robot_y = 5.5, -2.5  # Fixed robot position
+    distance_samples = []
+    
+    for i in range(1000):
+        goal_x, goal_y, region = sampler_test.get_goal_position(robot_x, robot_y)
+        distance = np.sqrt((goal_x - robot_x)**2 + (goal_y - robot_y)**2)
+        distance_samples.append(distance)
+        sampler_test.update_curriculum(success=True)
+    
+    # Analyze distribution
+    close_count = sum(1 for d in distance_samples if 1.0 <= d < 3.0)
+    medium_count = sum(1 for d in distance_samples if 3.0 <= d < 6.0)
+    far_count = sum(1 for d in distance_samples if d >= 6.0)
+    
+    print(f"\nActual distribution (out of 1000 samples):")
+    print(f"  Close (1-3m):  {close_count/10:.1f}% (expected ~50%)")
+    print(f"  Medium (3-6m): {medium_count/10:.1f}% (expected ~30%)")
+    print(f"  Far (6+m):     {far_count/10:.1f}% (expected ~20%)")
     
     print("\n✓ SmallHouseRegionSampler tests completed!")

@@ -2,6 +2,10 @@
 """
 Small House Environment for Navigation Training
 Based on environment_new.py with adaptations for AWS RoboMaker Small House world
+
+Supports configurable reward functions:
+- legacy: Original distance-based reward
+- lyapunov: CLF+CBF based reward with safety barrier
 """
 import os
 import rospy
@@ -17,16 +21,19 @@ from std_srvs.srv import Empty
 from gazebo_msgs.srv import SpawnModel, DeleteModel, SetModelState
 from gazebo_msgs.msg import ModelState
 from small_house_region_sampler import SmallHouseRegionSampler
+from rewards import get_reward_function
 
-# Diagonal distance for small house (approximately 17m x 10m)
-diagonal_dis = math.sqrt(2) * (17.0 + 10.0)
+# Environment dimensions (17m x 10m)
+ENV_WIDTH = 17.0
+ENV_HEIGHT = 10.0
+diagonal_dis = math.sqrt(ENV_WIDTH**2 + ENV_HEIGHT**2)
 
 # Use absolute path to goal model (works from any folder location)
 goal_model_dir = '/root/catkin_ws/src/turtlebot3_simulations/turtlebot3_gazebo/models/Target/model.sdf'
 
 
 class Env():
-    def __init__(self, is_training):
+    def __init__(self, is_training, reward_type='legacy'):
         self.position = Pose()
         self.goal_position = Pose()
         self.goal_position.position.x = 0.
@@ -40,6 +47,15 @@ class Env():
         self.del_model = rospy.ServiceProxy('/gazebo/delete_model', DeleteModel)
         self.set_state = rospy.ServiceProxy('/gazebo/set_model_state', SetModelState)
         self.past_distance = 0.
+        self.min_laser_distance = 3.5  # Track minimum laser distance for reward
+        
+        # Initialize reward function
+        self.reward_type = reward_type
+        self.reward_fn = get_reward_function(
+            reward_type,
+            env_width=ENV_WIDTH,
+            env_height=ENV_HEIGHT
+        )
         
         if is_training:
             self.threshold_arrive = 0.3  # Slightly larger for small house
@@ -54,7 +70,10 @@ class Env():
             increment_every_n_episodes=500
         )
         
-        print(f"[SmallHouseEnv] Initialized with arrival threshold: {self.threshold_arrive}m")
+        print(f"[SmallHouseEnv] Initialized with:")
+        print(f"  Arrival threshold: {self.threshold_arrive}m")
+        print(f"  Reward type: {reward_type}")
+        print(f"  Environment: {ENV_WIDTH}m x {ENV_HEIGHT}m")
 
     def getGoalDistace(self):
         goal_distance = math.hypot(
@@ -128,7 +147,11 @@ class Env():
             else:
                 scan_range.append(scan.ranges[i])
 
-        if min_range > min(scan_range) > 0:
+        # Track minimum laser distance for reward computation
+        min_laser = min(scan_range) if scan_range else 3.5
+        self.min_laser_distance = min_laser
+        
+        if min_range > min_laser > 0:
             done = True
 
         current_distance = math.hypot(
@@ -145,17 +168,23 @@ class Env():
             self.goal_position.position.x - self.position.x, 
             self.goal_position.position.y - self.position.y
         )
-        distance_rate = (self.past_distance - current_distance)
-
-        reward = 500. * distance_rate
+        
+        # Compute reward using the configured reward function
+        reward, reward_info = self.reward_fn.compute_reward(
+            current_distance=current_distance,
+            past_distance=self.past_distance,
+            min_laser_distance=self.min_laser_distance,
+            heading_error=self.diff_angle,
+            done=done,
+            arrive=arrive
+        )
+        
         self.past_distance = current_distance
 
         if done:
-            reward = -100.
             self.pub_cmd_vel.publish(Twist())
 
         if arrive:
-            reward = 120.
             self.pub_cmd_vel.publish(Twist())
             
             # Update curriculum learning
@@ -221,6 +250,10 @@ class Env():
 
         state = state + [rel_dis / diagonal_dis, yaw / 360, rel_theta / 360, diff_angle / 180]
         reward = self.setReward(done, arrive)
+        
+        # End episode on arrival for clean logging (robot stays at current position, new goal already spawned)
+        if arrive:
+            done = True
 
         return np.asarray(state), reward, done, arrive
 

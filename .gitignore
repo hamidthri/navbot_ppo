@@ -123,3 +123,6 @@ project_ppo/src/sac_networks_gru.py
 turtlebot3_simulations/turtlebot3_gazebo/launch/turtlebot3_stage_new.launch
 
 project_ppo/src/sac_vision/*
+# all the models and images in the sac_lidar goes to gitignore
+project_ppo/src/sac_lidar/models/
+project_ppo/src/sac_lidar/images/
