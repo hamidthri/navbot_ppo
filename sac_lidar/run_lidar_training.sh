@@ -1,17 +1,17 @@
-#!/bin/bash
+#!/usr/bin/bash
 ###############################################################################
-# Vision SAC Training Launch Script
+# LiDAR SAC Training Launch Script
 # This script handles the complete training pipeline:
 # 1. Kills existing processes
 # 2. Launches Gazebo with small house world
-# 3. Starts vision-based SAC training (FOREGROUND)
+# 3. Starts LiDAR-only SAC training (FOREGROUND)
 # 4. Kills Gazebo when training finishes
 ###############################################################################
 
 set -e  # Exit on error
 
 echo "=============================================="
-echo "Vision SAC Training Pipeline"
+echo "LiDAR SAC Training Pipeline"
 echo "=============================================="
 
 # Colors for output
@@ -22,18 +22,13 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Parse arguments (optional overrides)
-FUSION_TYPE=""
 MAX_TIMESTEPS=""
 REWARD_TYPE=""
-RUN_NAME_ARG=""
+RUN_NAME=""
 RESUME=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --fusion_type)
-            FUSION_TYPE="$2"
-            shift 2
-            ;;
         --max_timesteps)
             MAX_TIMESTEPS="$2"
             shift 2
@@ -43,7 +38,7 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --run_name)
-            RUN_NAME_ARG="$2"
+            RUN_NAME="$2"
             shift 2
             ;;
         --resume)
@@ -52,7 +47,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         *)
             echo "Unknown argument: $1"
-            echo "Usage: $0 [--fusion_type TYPE] [--max_timesteps N] [--reward_type legacy|lyapunov] [--run_name NAME] [--resume CHECKPOINT]"
+            echo "Usage: $0 [--max_timesteps N] [--reward_type TYPE] [--run_name NAME] [--resume CHECKPOINT]"
             exit 1
             ;;
     esac
@@ -60,7 +55,7 @@ done
 
 # Step 1: Kill all existing processes
 echo -e "${YELLOW}[1/4] Killing existing ROS/Gazebo/Python processes...${NC}"
-pkill -9 -f 'roslaunch|gzserver|gzclient|rosmaster|python3.*sac_training' 2>/dev/null || true
+pkill -9 -f 'roslaunch|gzserver|gzclient|rosmaster|python3.*sac' 2>/dev/null || true
 sleep 2
 echo -e "${GREEN}✓ Processes killed${NC}"
 
@@ -72,7 +67,7 @@ echo -e "${GREEN}✓ ROS environment configured${NC}"
 
 # Step 3: Launch Gazebo with small house world
 echo -e "${YELLOW}[3/4] Launching Gazebo with small house world...${NC}"
-roslaunch project sac_small_house.launch > /tmp/gazebo_vision.log 2>&1 &
+roslaunch project sac_small_house.launch > /tmp/gazebo_lidar.log 2>&1 &
 GAZEBO_PID=$!
 
 # Wait for Gazebo to be ready
@@ -81,54 +76,35 @@ sleep 12
 
 # Check if Gazebo is running
 if ! rosnode list | grep -q "/gazebo"; then
-    echo -e "${RED}✗ Gazebo failed to start! Check /tmp/gazebo_vision.log${NC}"
+    echo -e "${RED}✗ Gazebo failed to start! Check /tmp/gazebo_lidar.log${NC}"
     kill $GAZEBO_PID 2>/dev/null || true
     exit 1
 fi
 echo -e "${GREEN}✓ Gazebo running (PID: $GAZEBO_PID)${NC}"
 
 # Step 4: Change to training directory
-cd /root/catkin_ws/src/project_ppo/src/sac_vision
-
-# Read config to determine run name
-echo -e "${YELLOW}[4/4] Preparing training...${NC}"
-if [ -f "config.yaml" ]; then
-    # Parse fusion_type and backbone from config (or use overrides)
-    if [ -z "$FUSION_TYPE" ]; then
-        FUSION_TYPE=$(grep "^fusion_type:" config.yaml | awk '{print $2}' | tr -d "'\"")
-    fi
-    BACKBONE=$(grep "^backbone:" config.yaml | awk '{print $2}' | tr -d "'\"")
-    
-    RUN_NAME="${FUSION_TYPE}_${BACKBONE}"
-else
-    echo -e "${RED}✗ config.yaml not found!${NC}"
-    kill $GAZEBO_PID 2>/dev/null || true
-    exit 1
-fi
+cd /root/catkin_ws/src/sac_lidar
 
 # Create log directory in the models directory (persistent on host)
-LOG_DIR="models/sac_vision/${RUN_NAME}"
+echo -e "${YELLOW}[4/4] Preparing training...${NC}"
+LOG_DIR="models/sac_lidar"
 mkdir -p "$LOG_DIR"
 LOG_FILE="${LOG_DIR}/training_$(date +%Y%m%d_%H%M%S).log"
 
-echo -e "${BLUE}Run Name:      ${RUN_NAME}${NC}"
 echo -e "${BLUE}Training Log:  ${LOG_FILE}${NC}"
 echo "=============================================="
 echo ""
 
 # Build command with optional overrides
-CMD="python3 -u sac_training_vision.py"
-if [ -n "$FUSION_TYPE" ]; then
-    CMD="$CMD --fusion_type $FUSION_TYPE"
-fi
+CMD="python3 -u train_sac_lidar.py"
 if [ -n "$MAX_TIMESTEPS" ]; then
     CMD="$CMD --max_timesteps $MAX_TIMESTEPS"
 fi
 if [ -n "$REWARD_TYPE" ]; then
     CMD="$CMD --reward_type $REWARD_TYPE"
 fi
-if [ -n "$RUN_NAME_ARG" ]; then
-    CMD="$CMD --run_name $RUN_NAME_ARG"
+if [ -n "$RUN_NAME" ]; then
+    CMD="$CMD --run_name $RUN_NAME"
 fi
 if [ -n "$RESUME" ]; then
     CMD="$CMD --resume $RESUME"

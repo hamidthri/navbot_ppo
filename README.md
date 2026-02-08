@@ -4,6 +4,15 @@ The goal is to use deep reinforcement learning algorithms, specifically Proximal
 
 **Goal:** Enable the robot (TurtleBot) to navigate to the target (enter the yellow circle).
 
+## 🚀 SAC Implementations
+
+This repository includes two Soft Actor-Critic (SAC) implementations for robot navigation:
+
+- **[sac_vision/](sac_vision/)** - Vision + LiDAR fusion with multiple fusion strategies (FiLM, concat, attention, gated)
+- **[sac_lidar/](sac_lidar/)** - LiDAR-only baseline for comparison
+
+Both implementations are **independent** and can be run separately. See their respective READMEs for Docker and ROS1 instructions.
+
 
 ### Demo GIF
 

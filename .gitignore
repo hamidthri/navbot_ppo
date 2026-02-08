@@ -124,13 +124,13 @@ turtlebot3_simulations/turtlebot3_gazebo/launch/turtlebot3_stage_new.launch
 
 # ===== SAC Training Artifacts =====
 # Models, checkpoints, and training outputs
-project_ppo/src/sac_lidar/models/
-project_ppo/src/sac_lidar/images/
-project_ppo/src/sac_vision/models/
+sac_lidar/models/
+sac_lidar/images/
+sac_vision/models/
 
 # Evaluations and test outputs
-project_ppo/src/sac_lidar/evaluations/
-project_ppo/src/sac_vision/evaluations/
+sac_lidar/evaluations/
+sac_vision/evaluations/
 
 # Videos and trajectories
 *.mp4
@@ -142,10 +142,10 @@ project_ppo/src/sac_vision/evaluations/
 # Debug directories and runs
 **/DEBUG*/
 **/debug*/
-project_ppo/src/sac_lidar/FINAL_RUNS/
-project_ppo/src/sac_lidar/saved_runs/
-project_ppo/src/sac_vision/runs/
-project_ppo/src/sac_lidar/runs/
+sac_lidar/FINAL_RUNS/
+sac_lidar/saved_runs/
+sac_vision/runs/
+sac_lidar/runs/
 
 # Visualization outputs
 **/viz/
@@ -153,26 +153,26 @@ project_ppo/src/sac_lidar/runs/
 **/viz2/
 
 # Test and analysis files
-project_ppo/src/sac_lidar/tests/
-project_ppo/src/sac_vision/tests/
-project_ppo/src/**/test_*.py
-project_ppo/src/**/*_test.py
+sac_lidar/tests/
+sac_vision/tests/
+**/test_*.py
+**/*_test.py
 
 # Comparison and analysis scripts (temporary)
-project_ppo/src/compare_*.py
-project_ppo/src/analyze_*.py
-project_ppo/src/comparison_plots/
+compare_*.py
+analyze_*.py
+comparison_plots/
 
 # Summary and documentation generated during training
-project_ppo/src/sac_vision/RUN_SUMMARY*.md
-project_ppo/src/sac_lidar/RUN_SUMMARY*.md
+sac_vision/RUN_SUMMARY*.md
+sac_lidar/RUN_SUMMARY*.md
 
 # Evaluation scripts (temporary/debug)
-project_ppo/src/sac_lidar/eval_sequential*.py
-project_ppo/src/sac_lidar/plot_sequential*.py
-project_ppo/src/sac_lidar/run_eval*.sh
-project_ppo/src/sac_lidar/run_sequential*.sh
-project_ppo/src/sac_vision/run_eval*.sh
+sac_lidar/eval_sequential*.py
+sac_lidar/plot_sequential*.py
+sac_lidar/run_eval*.sh
+sac_lidar/run_sequential*.sh
+sac_vision/run_eval*.sh
 
 # TensorBoard logs
 **/logs/events.out.tfevents*

@@ -2,6 +2,17 @@
 
 LiDAR-only navigation using Soft Actor-Critic (SAC). Baseline implementation for comparison with vision-based approaches.
 
+## Prerequisites
+
+This implementation requires the **AWS RoboMaker Small House World** for Gazebo simulation. The world should be cloned in the workspace root:
+
+```bash
+cd /path/to/navbot_ppo
+git clone https://github.com/aws-robotics/aws-robomaker-small-house-world.git
+```
+
+For Docker users, this should already be set up in the container.
+
 ## Running with Docker
 
 ```bash
@@ -10,7 +21,7 @@ docker compose up -d
 docker exec -it navbot-ppo bash
 
 # 2. Navigate to sac_lidar folder
-cd /workspace/project_ppo/src/sac_lidar
+cd /root/catkin_ws/src/sac_lidar
 
 # 3. Run training with shell script (recommended)
 ./run_lidar_training.sh --max_timesteps 200000 --reward_type legacy
@@ -27,14 +38,14 @@ python3 train_sac_lidar.py \
 ```bash
 # 1. Launch Gazebo (in one terminal)
 export TURTLEBOT3_MODEL=burger
-roslaunch project_ppo navbot_small_house.launch gui:=false
+roslaunch project sac_small_house.launch gui:=false
 
 # 2. Run training with shell script (in another terminal)
-cd project_ppo/src/sac_lidar
+cd /path/to/navbot_ppo/sac_lidar
 ./run_lidar_training.sh --max_timesteps 200000
 
 # 3. Or run training directly with Python
-cd project_ppo/src/sac_lidar
+cd /path/to/navbot_ppo/sac_lidar
 python3 train_sac_lidar.py \
     --max_timesteps 200000 \
     --reward_type legacy
