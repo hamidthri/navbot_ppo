@@ -122,7 +122,57 @@ project_ppo/src/sac_gru_stage_1.py
 project_ppo/src/sac_networks_gru.py
 turtlebot3_simulations/turtlebot3_gazebo/launch/turtlebot3_stage_new.launch
 
-project_ppo/src/sac_vision/*
-# all the models and images in the sac_lidar goes to gitignore
+# ===== SAC Training Artifacts =====
+# Models, checkpoints, and training outputs
 project_ppo/src/sac_lidar/models/
 project_ppo/src/sac_lidar/images/
+project_ppo/src/sac_vision/models/
+
+# Evaluations and test outputs
+project_ppo/src/sac_lidar/evaluations/
+project_ppo/src/sac_vision/evaluations/
+
+# Videos and trajectories
+*.mp4
+*.avi
+*.mov
+**/videos/
+**/trajectories/
+
+# Debug directories and runs
+**/DEBUG*/
+**/debug*/
+project_ppo/src/sac_lidar/FINAL_RUNS/
+project_ppo/src/sac_lidar/saved_runs/
+project_ppo/src/sac_vision/runs/
+project_ppo/src/sac_lidar/runs/
+
+# Visualization outputs
+**/viz/
+**/viz1/
+**/viz2/
+
+# Test and analysis files
+project_ppo/src/sac_lidar/tests/
+project_ppo/src/sac_vision/tests/
+project_ppo/src/**/test_*.py
+project_ppo/src/**/*_test.py
+
+# Comparison and analysis scripts (temporary)
+project_ppo/src/compare_*.py
+project_ppo/src/analyze_*.py
+project_ppo/src/comparison_plots/
+
+# Summary and documentation generated during training
+project_ppo/src/sac_vision/RUN_SUMMARY*.md
+project_ppo/src/sac_lidar/RUN_SUMMARY*.md
+
+# Evaluation scripts (temporary/debug)
+project_ppo/src/sac_lidar/eval_sequential*.py
+project_ppo/src/sac_lidar/plot_sequential*.py
+project_ppo/src/sac_lidar/run_eval*.sh
+project_ppo/src/sac_lidar/run_sequential*.sh
+project_ppo/src/sac_vision/run_eval*.sh
+
+# TensorBoard logs
+**/logs/events.out.tfevents*

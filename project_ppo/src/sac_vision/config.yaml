@@ -1,0 +1,51 @@
+# Vision SAC Training Configuration (IMPROVED ARCHITECTURE)
+
+# Network Architecture
+backbone: 'resnet18'
+fusion_type: 'concat'
+lidar_encoder_dim: 256
+hidden_dim: 256
+
+# IMPROVED ARCHITECTURE (NEW)
+num_residual_blocks: 2  # Add depth with residual connections
+dropout: 0.1             # Regularization (0.0 to disable)
+
+# Training Parameters
+max_timesteps: 100000
+batch_size: 256
+buffer_size: 100000
+start_timesteps: 2000
+update_after: 2000
+update_every: 100      # INCREASED: Update less frequently
+gradient_steps: 50     # NEW: Max gradient steps per update (prevents robot freezing)
+
+# SAC Hyperparameters
+lr_actor: 0.0001
+lr_critic: 0.0001
+lr_alpha: 0.0003
+gamma: 0.99
+tau: 0.001
+
+# STABILITY FIXES
+gradient_clip_norm: 1.0
+reward_scale: 100.0            # Divide raw rewards by this
+use_reward_normalization: false # Use running mean/std normalization
+q_value_clip_min: -100.0
+q_value_clip_max: 100.0
+
+# Logging and Saving
+save_dir: 'models/sac_vision_100k'
+save_freq: 10000
+log_freq: 10000
+
+# Environment
+# Max episode steps calculation:
+# - Environment: 17m x 8m, diagonal = 18.8m
+# - Robot max speed: 0.25 m/s (linear_vel/4)
+# - Control frequency: ~5 Hz
+# - Minimum steps to cross diagonal: 18.8m / 0.25m/s * 5Hz = 376 steps
+# - With margin for turning/obstacles: 500+ steps recommended
+max_episode_steps: 800
+
+# Reward function type: 'legacy' (distance-based) or 'lyapunov' (CLF+CBF)
+reward_type: 'legacy'

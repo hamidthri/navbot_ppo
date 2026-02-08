@@ -65,6 +65,44 @@ The outputs, forming a 2-dimensional action, consist of:
 ## Algorithm
 - **Proximal Policy Optimization (PPO)** using Actor and Critic methods, implemented with PyTorch.
 
+## SAC Implementations (New!)
+
+This repository now includes two Soft Actor-Critic (SAC) implementations for comparison with PPO:
+
+### 🎯 SAC Vision Navigation (`project_ppo/src/sac_vision/`)
+Vision-based navigation using RGB camera + LiDAR fusion with SAC. Features:
+- Multiple fusion strategies (FiLM, concatenation, attention, gated)
+- ResNet18/34/50 vision backbones with ImageNet normalization
+- Legacy and Lyapunov reward shaping
+- Comprehensive TensorBoard logging
+
+**Quick start:**
+```bash
+cd project_ppo/src/sac_vision
+./run_vision_training.sh --fusion_type film --max_timesteps 200000 --reward_type legacy
+```
+
+See [SAC Vision README](project_ppo/src/sac_vision/README.md) for details.
+
+### 📡 SAC LiDAR Navigation (`project_ppo/src/sac_lidar/`)
+LiDAR-only navigation baseline for comparison. Features:
+- Efficient 16D LiDAR state representation
+- Larger replay buffer (1M) and batch size (256)
+- Legacy and Lyapunov reward shaping
+- Fast training without image processing overhead
+
+**Quick start:**
+```bash
+cd project_ppo/src/sac_lidar
+./run_lidar_training.sh --max_timesteps 200000 --reward_type legacy
+```
+
+See [SAC LiDAR README](project_ppo/src/sac_lidar/README.md) for details.
+
+### Results Comparison
+- **LiDAR-only**: ~50-55% success rate, 11.68 avg reward (200k steps)
+- **Vision+LiDAR**: ~47% success rate, 11.31 avg reward (200k steps)
+
 ## Training Environment
 - **Gazebo**: A robot simulation environment, managed via Neotic and PyTorch for enhanced machine learning capabilities.
 

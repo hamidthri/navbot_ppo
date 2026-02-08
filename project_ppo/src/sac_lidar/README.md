@@ -1,89 +1,65 @@
-# LiDAR SAC Training
+# SAC LiDAR Navigation
 
-This folder contains the LiDAR-only SAC implementation for baseline comparison.
+LiDAR-only navigation using Soft Actor-Critic (SAC). Baseline implementation for comparison with vision-based approaches.
 
-## Quick Start
+## Running with Docker
 
-### Run Training (Automated)
 ```bash
-# Inside Docker container:
-bash /root/catkin_ws/src/project_ppo/src/sac_lidar/run_lidar_training.sh
+# 1. Start container
+docker compose up -d
+docker exec -it navbot-ppo bash
 
-# Or from host:
-docker exec -it navbot-ppo bash /root/catkin_ws/src/project_ppo/src/sac_lidar/run_lidar_training.sh
+# 2. Navigate to sac_lidar folder
+cd /workspace/project_ppo/src/sac_lidar
+
+# 3. Run training with shell script (recommended)
+./run_lidar_training.sh --max_timesteps 200000 --reward_type legacy
+
+# 4. Or run training directly with Python
+python3 train_sac_lidar.py \
+    --max_timesteps 200000 \
+    --reward_type legacy \
+    --run_name my_training_run
 ```
 
-The script automatically:
-1. ✓ Kills existing processes
-2. ✓ Launches Gazebo with small house world
-3. ✓ Starts LiDAR SAC training
-4. ✓ Logs output to timestamped file in `/tmp/`
+## Running with ROS1 (Native Install)
 
-### Training Configuration
-- **Timesteps**: 10,000 (configurable in `train_sac_lidar.py`)
-- **State**: 16D LiDAR scans only
-- **Replay Buffer**: 1M capacity (memory-efficient without images)
-- **Batch Size**: 256
-- **Hidden Dim**: 256
-
-### Files
-- `run_lidar_training.sh` - Automated training launcher
-- `train_sac_lidar.py` - Main training script
-- `sac.py` - SAC agent
-- `sac_networks.py` - Actor/Critic networks
-- `replay_buffer.py` - Standard replay buffer
-- `environment_small_house.py` - LiDAR-only environment
-- `small_house_region_sampler.py` - Goal/spawn sampling
-
-### Monitor Training
 ```bash
-# Watch live training output
-docker exec navbot-ppo tail -f /tmp/lidar_training_*.log
+# 1. Launch Gazebo (in one terminal)
+export TURTLEBOT3_MODEL=burger
+roslaunch project_ppo navbot_small_house.launch gui:=false
 
-# Check latest log
-docker exec navbot-ppo ls -lt /tmp/lidar_training_*.log | head -1
+# 2. Run training with shell script (in another terminal)
+cd project_ppo/src/sac_lidar
+./run_lidar_training.sh --max_timesteps 200000
+
+# 3. Or run training directly with Python
+cd project_ppo/src/sac_lidar
+python3 train_sac_lidar.py \
+    --max_timesteps 200000 \
+    --reward_type legacy
 ```
 
-### Evaluate Trained Model
+## Training Arguments
+
+- `--max_timesteps`: Total training steps - default: `200000`
+- `--reward_type`: Reward function (`legacy`, `lyapunov`) - default: `legacy`
+- `--run_name`: Custom name for this training run (optional)
+- `--resume`: Path to checkpoint to resume training (optional)
+
+## Evaluation
+
 ```bash
-# Inside Docker container
-cd /root/catkin_ws/src/project_ppo/src/sac_lidar
+# With Gazebo running:
+python3 eval_sac_lidar.py \
+    --model models/sac_lidar_200k/sac_lidar_final_200001.pth \
+    --episodes 10
 
-# Evaluate with default settings (10 episodes)
-python3 eval_sac_lidar.py --model models/sac_lidar_10k/sac_lidar_final_10001.pth
-
-# Evaluate with custom episodes
-python3 eval_sac_lidar.py --model models/sac_lidar_10k/sac_lidar_5000.pth --episodes 20
-
-# From host
-docker exec -it navbot-ppo bash -c "cd /root/catkin_ws/src/project_ppo/src/sac_lidar && python3 eval_sac_lidar.py --model models/sac_lidar_10k/sac_lidar_final_10001.pth"
+# Sequential navigation evaluation:
+python3 eval_sequential_r6_r7_r8_r11_r13.py \
+    --model_path models/sac_lidar_200k/sac_lidar_final_200001.pth
 ```
 
-**Note**: Gazebo must be running before evaluation. The script will use the existing Gazebo instance.
+## Configuration
 
-### Models
-Saved to: `models/sac_lidar_10k/`
-- Checkpoints every 5000 steps
-- Final model after 10k steps
-
-## Architecture
-
-```
-LiDAR Scan (16D)
-      ↓
-  Actor Network (256 → 256 → action)
-      ↓
-  Critic Network (256 → 256 → Q-value)
-```
-
-## Comparison with Vision
-- **Faster**: No image processing overhead
-- **Memory Efficient**: Larger replay buffer (1M vs 50k)
-- **Larger Batch**: 256 vs 64
-- **Baseline**: Pure LiDAR performance without visual information
-
-## Notes
-- LiDAR-only baseline for comparison with vision approaches
-- Faster training due to simpler state representation
-- Good for benchmarking vision improvements
-- Success rate and collision metrics tracked during episodes
+Edit `config_lidar.yaml` to change hyperparameters (learning rates, batch size, buffer size, network architecture, etc.).
