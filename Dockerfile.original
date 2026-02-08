@@ -8,7 +8,6 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     python3-catkin-tools \
     python3-rosdep \
-    python3-opencv \
     git \
     libosmesa6 \
     mesa-utils \
@@ -20,15 +19,14 @@ RUN apt-get update && apt-get install -y \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python packages - PyTorch 2.0.1 with CUDA 11.8 for RTX 4090 (sm_89) support
-# First install typing-extensions compatible with Python 3.8
-RUN pip3 install --no-cache-dir 'typing-extensions<4.6.0' && \
-    pip3 install --no-cache-dir \
+RUN pip3 install --no-cache-dir \
     torch==2.0.1 torchvision==0.15.2 --index-url https://download.pytorch.org/whl/cu118 && \
     pip3 install --no-cache-dir \
     numpy==1.19.1 \
     scipy==1.5.2 \
     matplotlib==3.3.1 \
     pandas==1.1.1 \
+    opencv-python-headless==4.4.0.42 \
     gym==0.17.2 \
     stable-baselines==2.10.1 \
     cloudpickle==1.3.0 \
@@ -36,18 +34,13 @@ RUN pip3 install --no-cache-dir 'typing-extensions<4.6.0' && \
     pillow==7.2.0 \
     pyglet==1.5.0 \
     joblib==0.16.0 \
-    tensorboard==2.11.0 \
     catkin_pkg \
     rospkg
 
-# Create workspace and copy only non-volume-mounted directories
-# Note: project_ppo, sac_vision, sac_lidar will be mounted as volumes
+# Create workspace and copy all project files
 RUN mkdir -p /root/catkin_ws/src
 WORKDIR /root/catkin_ws/src
-COPY turtlebot3 /root/catkin_ws/src/turtlebot3
-COPY turtlebot3_msgs /root/catkin_ws/src/turtlebot3_msgs
-COPY turtlebot3_simulations /root/catkin_ws/src/turtlebot3_simulations
-COPY aws-robomaker-small-house-world /root/catkin_ws/src/aws-robomaker-small-house-world
+COPY . /root/catkin_ws/src/
 
 # Build workspace
 WORKDIR /root/catkin_ws

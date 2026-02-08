@@ -13,9 +13,11 @@ services:
       - QT_X11_NO_MITSHM=1
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      # Project directories - allows running different training implementations independently
       - ./project_ppo:/root/catkin_ws/src/project:rw
       - ./sac_vision:/root/catkin_ws/src/sac_vision:rw
       - ./sac_lidar:/root/catkin_ws/src/sac_lidar:rw
+      # ROS dependencies - mounted for potential modifications
       - ./turtlebot3:/root/catkin_ws/src/turtlebot3:rw
       - ./turtlebot3_msgs:/root/catkin_ws/src/turtlebot3_msgs:rw
       - ./turtlebot3_simulations:/root/catkin_ws/src/turtlebot3_simulations:rw
