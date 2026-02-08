@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  navbot:
+    build: .
+    image: navbot-ppo:latest
+    container_name: navbot-ppo
+    # Run as root to access /root/catkin_ws (file ownership preserved via bind mount)
+    # user: "6941:1040"
+    environment:
+      - DISPLAY=:1
+      - TURTLEBOT3_MODEL=burger
+      - QT_X11_NO_MITSHM=1
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ./project_ppo:/root/catkin_ws/src/project:rw
+      - ./sac_vision:/root/catkin_ws/src/sac_vision:rw
+      - ./sac_lidar:/root/catkin_ws/src/sac_lidar:rw
+      - ./turtlebot3:/root/catkin_ws/src/turtlebot3:rw
+      - ./turtlebot3_msgs:/root/catkin_ws/src/turtlebot3_msgs:rw
+      - ./turtlebot3_simulations:/root/catkin_ws/src/turtlebot3_simulations:rw
+      - ./aws-robomaker-small-house-world:/root/catkin_ws/src/aws-robomaker-small-house-world:rw
+    network_mode: host
+    stdin_open: true
+    tty: true
+    privileged: true
+    # GPU support - uncomment if NVIDIA GPU is available and drivers are working
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
