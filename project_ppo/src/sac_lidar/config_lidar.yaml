@@ -10,6 +10,8 @@ buffer_size: 1000000
 
 # SAC Hyperparameters
 hidden_dim: 256
+num_residual_blocks: 0  # Number of residual blocks (0 = original 2-layer network, 1-4 = deeper network)
+dropout: 0.0  # Dropout rate for residual blocks (0.0 = no dropout, 0.1-0.2 recommended if using)
 lr_actor: 0.0003
 lr_critic: 0.0003
 lr_alpha: 0.0003

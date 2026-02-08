@@ -85,6 +85,8 @@ def train_lidar_sac(config):
         action_dim=ACTION_DIM,
         device=device,
         hidden_dim=config['hidden_dim'],
+        num_residual_blocks=config.get('num_residual_blocks', 0),
+        dropout=config.get('dropout', 0.0),
         lr_actor=config['lr_actor'],
         lr_critic=config['lr_critic'],
         lr_alpha=config['lr_alpha'],
@@ -97,9 +99,27 @@ def train_lidar_sac(config):
         action_space=action_space
     )
     
+    # Resume from checkpoint if specified
+    start_timesteps = 0
+    if config.get('resume_checkpoint'):
+        checkpoint_path = config['resume_checkpoint']
+        if os.path.exists(checkpoint_path):
+            agent.load(checkpoint_path)
+            # Extract timestep from checkpoint name (e.g., sac_70000.pth -> 70000)
+            try:
+                checkpoint_name = os.path.basename(checkpoint_path)
+                start_timesteps = int(checkpoint_name.replace('sac_', '').replace('.pth', ''))
+                print(f"[Resume] Loaded checkpoint from {checkpoint_path}")
+                print(f"[Resume] Starting from timestep {start_timesteps}")
+            except ValueError:
+                print(f"[Resume] Loaded checkpoint but couldn't parse timestep from {checkpoint_path}")
+                print(f"[Resume] Starting from timestep 0")
+        else:
+            print(f"[Warning] Checkpoint not found: {checkpoint_path}")
+    
     # Training parameters
     episode_num = 0
-    total_timesteps = 0
+    total_timesteps = start_timesteps
     episode_rewards = []
     
     # Stats for periodic logging
@@ -267,6 +287,8 @@ if __name__ == '__main__':
                         help='Override reward type (legacy or lyapunov)')
     parser.add_argument('--run_name', type=str, default=None,
                         help='Custom run name for save directory')
+    parser.add_argument('--resume', type=str, default=None,
+                        help='Path to checkpoint to resume training from (e.g., models/sac_lidar/run_name/sac_70000.pth)')
     
     args = parser.parse_args()
     
@@ -279,6 +301,9 @@ if __name__ == '__main__':
     
     if args.reward_type is not None:
         config['reward_type'] = args.reward_type
+    
+    # Resume from checkpoint
+    config['resume_checkpoint'] = args.resume
     
     # Build save directory with run name
     reward_type = config.get('reward_type', 'legacy')

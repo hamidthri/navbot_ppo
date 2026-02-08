@@ -49,7 +49,8 @@ class LegacyReward:
                        min_laser_distance: float,
                        heading_error: float = None,
                        done: bool = False,
-                       arrive: bool = False) -> tuple:
+                       arrive: bool = False,
+                       **kwargs) -> tuple:  # Added **kwargs to accept extra args
         """
         Compute the legacy reward.
         
@@ -60,6 +61,7 @@ class LegacyReward:
             heading_error: Angle difference to goal (not used in legacy)
             done: Whether episode ended (collision)
             arrive: Whether robot reached goal
+            **kwargs: Additional arguments (ignored, for compatibility with directional CBF)
             
         Returns:
             tuple: (reward, info_dict)

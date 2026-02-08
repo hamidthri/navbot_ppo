@@ -25,6 +25,7 @@ NC='\033[0m' # No Color
 MAX_TIMESTEPS=""
 REWARD_TYPE=""
 RUN_NAME=""
+RESUME=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -40,9 +41,13 @@ while [[ $# -gt 0 ]]; do
             RUN_NAME="$2"
             shift 2
             ;;
+        --resume)
+            RESUME="$2"
+            shift 2
+            ;;
         *)
             echo "Unknown argument: $1"
-            echo "Usage: $0 [--max_timesteps N] [--reward_type TYPE] [--run_name NAME]"
+            echo "Usage: $0 [--max_timesteps N] [--reward_type TYPE] [--run_name NAME] [--resume CHECKPOINT]"
             exit 1
             ;;
     esac
@@ -100,6 +105,9 @@ if [ -n "$REWARD_TYPE" ]; then
 fi
 if [ -n "$RUN_NAME" ]; then
     CMD="$CMD --run_name $RUN_NAME"
+fi
+if [ -n "$RESUME" ]; then
+    CMD="$CMD --resume $RESUME"
 fi
 
 echo -e "${GREEN}Starting training (FOREGROUND MODE)...${NC}"

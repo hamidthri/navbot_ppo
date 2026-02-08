@@ -7,11 +7,11 @@ Available reward functions:
 """
 
 from .legacy_reward import LegacyReward
-from .lyapunov_reward import LyapunovReward
+from .lyapunov_reward import DirectionalCBFReward
 
 REWARD_FUNCTIONS = {
     'legacy': LegacyReward,
-    'lyapunov': LyapunovReward,
+    'lyapunov': DirectionalCBFReward,
 }
 
 def get_reward_function(reward_type: str, **kwargs):

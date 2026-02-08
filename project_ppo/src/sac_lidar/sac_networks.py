@@ -6,6 +6,7 @@ Implements:
 - GaussianPolicy: Stochastic actor with squashed Gaussian distribution
 - QNetwork: Twin Q-networks for value estimation
 - Automatic entropy temperature tuning
+- ResidualBlock: Optional residual connections for deeper networks
 """
 
 import numpy as np
@@ -23,15 +24,48 @@ def weights_init_(m):
         torch.nn.init.constant_(m.bias, 0)
 
 
+class ResidualBlock(nn.Module):
+    """
+    Residual block for deeper networks with better gradient flow.
+    
+    Features:
+    - Skip connection for gradient flow
+    - LayerNorm for stability
+    - Optional dropout for regularization
+    """
+    def __init__(self, dim, dropout=0.0):
+        super(ResidualBlock, self).__init__()
+        self.fc1 = nn.Linear(dim, dim)
+        self.fc2 = nn.Linear(dim, dim)
+        self.norm1 = nn.LayerNorm(dim)
+        self.norm2 = nn.LayerNorm(dim)
+        self.dropout = nn.Dropout(dropout) if dropout > 0 else None
+        
+    def forward(self, x):
+        residual = x
+        out = F.relu(self.norm1(self.fc1(x)))
+        if self.dropout:
+            out = self.dropout(out)
+        out = self.norm2(self.fc2(out))
+        out = out + residual  # Residual connection
+        out = F.relu(out)
+        return out
+
+
 class GaussianPolicy(nn.Module):
     """
     Stochastic policy network for SAC.
     
     Outputs mean and log_std for a Gaussian distribution over actions.
     Uses tanh squashing to bound actions and applies reparameterization trick.
+    
+    Args:
+        num_residual_blocks (int): Number of residual blocks to add (default=0 for original behavior)
+        dropout (float): Dropout rate for residual blocks (default=0.0)
     """
     
-    def __init__(self, state_dim, action_dim, hidden_dim=256, action_space=None):
+    def __init__(self, state_dim, action_dim, hidden_dim=256, action_space=None,
+                 num_residual_blocks=0, dropout=0.0):
         """
         Initialize Gaussian policy.
         
@@ -40,12 +74,25 @@ class GaussianPolicy(nn.Module):
             action_dim (int): Dimension of action space
             hidden_dim (int): Hidden layer size
             action_space: Action space for scaling (optional)
+            num_residual_blocks (int): Number of residual blocks (0 = original network)
+            dropout (float): Dropout probability for residual blocks
         """
         super(GaussianPolicy, self).__init__()
         
         # Network architecture
         self.fc1 = nn.Linear(state_dim, hidden_dim)
         self.fc2 = nn.Linear(hidden_dim, hidden_dim)
+        
+        # Optional residual blocks for deeper network
+        self.num_residual_blocks = num_residual_blocks
+        if num_residual_blocks > 0:
+            self.residual_blocks = nn.ModuleList([
+                ResidualBlock(hidden_dim, dropout) for _ in range(num_residual_blocks)
+            ])
+            print(f"[GaussianPolicy] Added {num_residual_blocks} residual blocks (dropout={dropout})")
+        else:
+            self.residual_blocks = None
+            print(f"[GaussianPolicy] Using original 2-layer architecture")
         
         self.mean = nn.Linear(hidden_dim, action_dim)
         self.log_std = nn.Linear(hidden_dim, action_dim)
@@ -81,6 +128,12 @@ class GaussianPolicy(nn.Module):
         """
         x = F.relu(self.fc1(state))
         x = F.relu(self.fc2(x))
+        
+        # Pass through residual blocks if they exist
+        if self.residual_blocks is not None:
+            for block in self.residual_blocks:
+                x = block(x)
+        
         mean = self.mean(x)
         log_std = self.log_std(x)
         
@@ -136,9 +189,14 @@ class QNetwork(nn.Module):
     Q-value network (critic) for SAC.
     
     Twin Q-networks to mitigate overestimation bias.
+    
+    Args:
+        num_residual_blocks (int): Number of residual blocks to add (default=0 for original behavior)
+        dropout (float): Dropout rate for residual blocks (default=0.0)
     """
     
-    def __init__(self, state_dim, action_dim, hidden_dim=256):
+    def __init__(self, state_dim, action_dim, hidden_dim=256,
+                 num_residual_blocks=0, dropout=0.0):
         """
         Initialize Q-network.
         
@@ -146,17 +204,40 @@ class QNetwork(nn.Module):
             state_dim (int): Dimension of state space
             action_dim (int): Dimension of action space
             hidden_dim (int): Hidden layer size
+            num_residual_blocks (int): Number of residual blocks (0 = original network)
+            dropout (float): Dropout probability for residual blocks
         """
         super(QNetwork, self).__init__()
         
         # Q1 architecture
         self.fc1 = nn.Linear(state_dim + action_dim, hidden_dim)
         self.fc2 = nn.Linear(hidden_dim, hidden_dim)
+        
+        # Optional residual blocks for Q1
+        self.num_residual_blocks = num_residual_blocks
+        if num_residual_blocks > 0:
+            self.residual_blocks_q1 = nn.ModuleList([
+                ResidualBlock(hidden_dim, dropout) for _ in range(num_residual_blocks)
+            ])
+        else:
+            self.residual_blocks_q1 = None
+            
         self.fc3 = nn.Linear(hidden_dim, 1)
         
         # Q2 architecture
         self.fc4 = nn.Linear(state_dim + action_dim, hidden_dim)
         self.fc5 = nn.Linear(hidden_dim, hidden_dim)
+        
+        # Optional residual blocks for Q2
+        if num_residual_blocks > 0:
+            self.residual_blocks_q2 = nn.ModuleList([
+                ResidualBlock(hidden_dim, dropout) for _ in range(num_residual_blocks)
+            ])
+            print(f"[QNetwork] Added {num_residual_blocks} residual blocks per Q-network (dropout={dropout})")
+        else:
+            self.residual_blocks_q2 = None
+            print(f"[QNetwork] Using original 2-layer architecture")
+            
         self.fc6 = nn.Linear(hidden_dim, 1)
         
         self.apply(weights_init_)
@@ -178,11 +259,23 @@ class QNetwork(nn.Module):
         # Q1 forward
         x1 = F.relu(self.fc1(xu))
         x1 = F.relu(self.fc2(x1))
+        
+        # Pass through residual blocks if they exist
+        if self.residual_blocks_q1 is not None:
+            for block in self.residual_blocks_q1:
+                x1 = block(x1)
+                
         q1 = self.fc3(x1)
         
         # Q2 forward
         x2 = F.relu(self.fc4(xu))
         x2 = F.relu(self.fc5(x2))
+        
+        # Pass through residual blocks if they exist
+        if self.residual_blocks_q2 is not None:
+            for block in self.residual_blocks_q2:
+                x2 = block(x2)
+                
         q2 = self.fc6(x2)
         
         return q1, q2

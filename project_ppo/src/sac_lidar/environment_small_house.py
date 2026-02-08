@@ -1,11 +1,7 @@
 #!/usr/bin/env python3
 """
 Small House Environment for Navigation Training
-Based on environment_new.py with adaptations for AWS RoboMaker Small House world
-
-Supports configurable reward functions:
-- legacy: Original distance-based reward
-- lyapunov: CLF+CBF based reward with safety barrier
+Modified for Directional CBF Reward - passes full laser scan and position info
 """
 import os
 import rospy
@@ -28,12 +24,22 @@ ENV_WIDTH = 17.0
 ENV_HEIGHT = 10.0
 diagonal_dis = math.sqrt(ENV_WIDTH**2 + ENV_HEIGHT**2)
 
-# Use absolute path to goal model (works from any folder location)
 goal_model_dir = '/root/catkin_ws/src/turtlebot3_simulations/turtlebot3_gazebo/models/Target/model.sdf'
+
+SERVICE_TIMEOUT = 10.0
+
+
+def wait_for_service_with_timeout(service_name, timeout=SERVICE_TIMEOUT):
+    try:
+        rospy.wait_for_service(service_name, timeout=timeout)
+        return True
+    except rospy.ROSException:
+        rospy.logwarn(f"Service {service_name} not available after {timeout}s timeout")
+        return False
 
 
 class Env():
-    def __init__(self, is_training, reward_type='legacy'):
+    def __init__(self, is_training, reward_type='lyapunov'):
         self.position = Pose()
         self.goal_position = Pose()
         self.goal_position.position.x = 0.
@@ -47,7 +53,10 @@ class Env():
         self.del_model = rospy.ServiceProxy('/gazebo/delete_model', DeleteModel)
         self.set_state = rospy.ServiceProxy('/gazebo/set_model_state', SetModelState)
         self.past_distance = 0.
-        self.min_laser_distance = 3.5  # Track minimum laser distance for reward
+        self.min_laser_distance = 3.5
+        
+        # Store full laser scan for directional CBF
+        self.current_laser_scan = None
         
         # Initialize reward function
         self.reward_type = reward_type
@@ -58,11 +67,11 @@ class Env():
         )
         
         if is_training:
-            self.threshold_arrive = 0.3  # Slightly larger for small house
+            self.threshold_arrive = 0.3
         else:
             self.threshold_arrive = 0.5
         
-        # Initialize region sampler for small house
+        # Initialize region sampler
         self.region_sampler = SmallHouseRegionSampler(
             initial_distance=2.0,
             max_distance=18.0,
@@ -147,7 +156,8 @@ class Env():
             else:
                 scan_range.append(scan.ranges[i])
 
-        # Track minimum laser distance for reward computation
+        # Store full laser scan AND min laser
+        self.current_laser_scan = scan_range.copy()
         min_laser = min(scan_range) if scan_range else 3.5
         self.min_laser_distance = min_laser
         
@@ -169,11 +179,17 @@ class Env():
             self.goal_position.position.y - self.position.y
         )
         
-        # Compute reward using the configured reward function
+        # Call reward function with full info for directional CBF
         reward, reward_info = self.reward_fn.compute_reward(
             current_distance=current_distance,
             past_distance=self.past_distance,
             min_laser_distance=self.min_laser_distance,
+            laser_scan=self.current_laser_scan,
+            robot_x=self.position.x,
+            robot_y=self.position.y,
+            robot_yaw_deg=self.yaw,
+            goal_x=self.goal_position.position.x,
+            goal_y=self.goal_position.position.y,
             heading_error=self.diff_angle,
             done=done,
             arrive=arrive
@@ -187,22 +203,29 @@ class Env():
         if arrive:
             self.pub_cmd_vel.publish(Twist())
             
-            # Update curriculum learning
             self.region_sampler.update_curriculum(success=True)
             
-            # Delete old goal
-            rospy.wait_for_service('/gazebo/delete_model')
+            # Check for evaluation mode flag (prevents auto-spawning during evaluation)
+            if hasattr(self, '_EVALUATION_MODE_NO_AUTOSPAWN') and self._EVALUATION_MODE_NO_AUTOSPAWN:
+                arrive = False
+                return reward
+            
+            # Auto-spawn new random goal (training mode only)
+            if not wait_for_service_with_timeout('/gazebo/delete_model'):
+                rospy.logerr("Gazebo delete_model service unavailable")
+                return reward
             self.del_model('target')
+            rospy.sleep(0.3)
 
-            # Spawn new goal using region sampler
-            rospy.wait_for_service('/gazebo/spawn_sdf_model')
+            if not wait_for_service_with_timeout('/gazebo/spawn_sdf_model'):
+                rospy.logerr("Gazebo spawn service unavailable")
+                return reward
             try:
                 goal_urdf = open(goal_model_dir, "r").read()
                 target = SpawnModel
                 target.model_name = 'target'
                 target.model_xml = goal_urdf
                 
-                # Use region sampler to get goal position based on curriculum
                 goal_x, goal_y, region_name = self.region_sampler.get_goal_position(
                     self.position.x, 
                     self.position.y
@@ -210,18 +233,18 @@ class Env():
                 
                 self.goal_position.position.x = goal_x
                 self.goal_position.position.y = goal_y
-                self.goal_position.position.z = 0.0
+                self.goal_position.position.z = 0.01
                 
                 self.goal(target.model_name, target.model_xml, 'namespace', 
                          self.goal_position, 'world')
-                
-                # print(f"[SmallHouseEnv] New goal at ({goal_x:.2f}, {goal_y:.2f}) in {region_name}")
+                rospy.sleep(0.3)
                 
             except (rospy.ServiceException) as e:
                 print(f"/gazebo/failed to build the target: {e}")
                 
-            rospy.wait_for_service('/gazebo/unpause_physics')
-            self.goal_distance = self.getGoalDistace()
+                if wait_for_service_with_timeout('/gazebo/unpause_physics'):
+                    pass
+                self.goal_distance = self.getGoalDistace()
             arrive = False
 
         return reward
@@ -251,25 +274,23 @@ class Env():
         state = state + [rel_dis / diagonal_dis, yaw / 360, rel_theta / 360, diff_angle / 180]
         reward = self.setReward(done, arrive)
         
-        # End episode on arrival for clean logging (robot stays at current position, new goal already spawned)
         if arrive:
             done = True
 
         return np.asarray(state), reward, done, arrive
 
     def reset(self):
-        # Reset simulation
-        rospy.wait_for_service('gazebo/reset_simulation')
+        if not wait_for_service_with_timeout('gazebo/reset_simulation'):
+            rospy.logerr("Gazebo reset service unavailable")
         try:
             self.reset_proxy()
         except (rospy.ServiceException) as e:
             print("gazebo/reset_simulation service call failed")
 
-        # Get random spawn position for robot
         robot_x, robot_y, spawn_name = self.region_sampler.get_robot_spawn_position()
         
-        # Move robot to spawn position
-        rospy.wait_for_service('/gazebo/set_model_state')
+        if not wait_for_service_with_timeout('/gazebo/set_model_state'):
+            rospy.logerr("Gazebo set_model_state service unavailable")
         try:
             state_msg = ModelState()
             state_msg.model_name = 'turtlebot3_burger'
@@ -281,57 +302,62 @@ class Env():
             state_msg.pose.orientation.z = 0.0
             state_msg.pose.orientation.w = 1.0
             self.set_state(state_msg)
-            # print(f"[SmallHouseEnv] Reset: Robot moved to {spawn_name} at ({robot_x:.2f}, {robot_y:.2f})")
         except (rospy.ServiceException) as e:
             print(f"Failed to set robot position: {e}")
 
-        # Delete old goal if exists
-        rospy.wait_for_service('/gazebo/delete_model')
-        try:
-            self.del_model('target')
-        except:
+        if wait_for_service_with_timeout('/gazebo/delete_model'):
+            try:
+                self.del_model('target')
+                rospy.sleep(0.3)
+            except:
+                pass
+
+        if hasattr(self, '_EVALUATION_MODE_NO_AUTOSPAWN') and self._EVALUATION_MODE_NO_AUTOSPAWN:
             pass
+        else:
+            if not wait_for_service_with_timeout('/gazebo/spawn_sdf_model'):
+                rospy.logerr("Gazebo spawn service unavailable")
+            try:
+                goal_urdf = open(goal_model_dir, "r").read()
+                target = SpawnModel
+                target.model_name = 'target'
+                target.model_xml = goal_urdf
+                
+                goal_x, goal_y, region_name = self.region_sampler.get_goal_position(
+                    robot_x, 
+                    robot_y
+                )
+                
+                self.goal_position.position.x = goal_x
+                self.goal_position.position.y = goal_y
+                self.goal_position.position.z = 0.01
+                
+                self.goal(target.model_name, target.model_xml, 'namespace', 
+                         self.goal_position, 'world')
+                rospy.sleep(0.3)
+                
+            except (rospy.ServiceException) as e:
+                print(f"/gazebo/failed to build the target: {e}")
 
-        # Spawn new goal using region sampler
-        rospy.wait_for_service('/gazebo/spawn_sdf_model')
-        try:
-            goal_urdf = open(goal_model_dir, "r").read()
-            target = SpawnModel
-            target.model_name = 'target'
-            target.model_xml = goal_urdf
-            
-            # Sample goal based on robot spawn position
-            goal_x, goal_y, region_name = self.region_sampler.get_goal_position(
-                robot_x, 
-                robot_y
-            )
-            
-            self.goal_position.position.x = goal_x
-            self.goal_position.position.y = goal_y
-            self.goal_position.position.z = 0.0
-            
-            self.goal(target.model_name, target.model_xml, 'namespace', 
-                     self.goal_position, 'world')
-            
-            distance = math.hypot(goal_x - robot_x, goal_y - robot_y)
-            # print(f"[SmallHouseEnv] Goal at ({goal_x:.2f}, {goal_y:.2f}) in {region_name}, distance: {distance:.2f}m")
-            
-        except (rospy.ServiceException) as e:
-            print(f"/gazebo/failed to build the target: {e}")
+        if wait_for_service_with_timeout('/gazebo/unpause_physics'):
+            try:
+                self.unpause_proxy()
+            except (rospy.ServiceException) as e:
+                print("gazebo/unpause_physics service call failed")
 
-        rospy.wait_for_service('/gazebo/unpause_physics')
-        try:
-            self.unpause_proxy()
-        except (rospy.ServiceException) as e:
-            print("gazebo/unpause_physics service call failed")
-
-        # Wait for scan data
         data = None
-        while data is None:
+        scan_retries = 0
+        while data is None and scan_retries < 10:
             try:
                 data = rospy.wait_for_message('scan', LaserScan, timeout=5)
             except:
-                pass
+                scan_retries += 1
+                rospy.logwarn(f"Waiting for scan data... retry {scan_retries}/10")
+        
+        if data is None:
+            rospy.logerr("Failed to get scan data after 10 retries")
+            state = [3.5] * 10 + [0, 0, 0, 0, 0, 0]
+            return np.asarray(state)
 
         self.goal_distance = self.getGoalDistace()
         scan_range, rel_dis, yaw, rel_theta, diff_angle, done, arrive = self.getState(data)
@@ -341,3 +367,9 @@ class Env():
         state = state + [rel_dis / diagonal_dis, yaw / 360, rel_theta / 360, diff_angle / 180]
 
         return np.asarray(state)
+    
+    def set_goal_position_no_spawn(self, x, y):
+        """Set goal position without spawning target (for external control)"""
+        self.goal_position.position.x = x
+        self.goal_position.position.y = y
+        self.goal_distance = self.getGoalDistace()

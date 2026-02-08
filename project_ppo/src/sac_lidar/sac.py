@@ -37,6 +37,8 @@ class SAC:
         device='cpu',
         # Network hyperparameters
         hidden_dim=256,
+        num_residual_blocks=0,
+        dropout=0.0,
         # Learning rates
         lr_actor=3e-4,
         lr_critic=3e-4,
@@ -60,6 +62,8 @@ class SAC:
             action_dim (int): Dimension of action space
             device (str): Device to use ('cpu' or 'cuda')
             hidden_dim (int): Hidden layer size
+            num_residual_blocks (int): Number of residual blocks (0 = original network)
+            dropout (float): Dropout probability for residual blocks
             lr_actor (float): Learning rate for policy
             lr_critic (float): Learning rate for Q-networks
             lr_alpha (float): Learning rate for entropy temperature
@@ -77,10 +81,19 @@ class SAC:
         self.batch_size = batch_size
         self.automatic_entropy_tuning = automatic_entropy_tuning
         
-        # Initialize networks
-        self.policy = GaussianPolicy(state_dim, action_dim, hidden_dim, action_space).to(device)
-        self.critic = QNetwork(state_dim, action_dim, hidden_dim).to(device)
-        self.critic_target = QNetwork(state_dim, action_dim, hidden_dim).to(device)
+        # Initialize networks with optional residual blocks
+        self.policy = GaussianPolicy(
+            state_dim, action_dim, hidden_dim, action_space,
+            num_residual_blocks=num_residual_blocks, dropout=dropout
+        ).to(device)
+        self.critic = QNetwork(
+            state_dim, action_dim, hidden_dim,
+            num_residual_blocks=num_residual_blocks, dropout=dropout
+        ).to(device)
+        self.critic_target = QNetwork(
+            state_dim, action_dim, hidden_dim,
+            num_residual_blocks=num_residual_blocks, dropout=dropout
+        ).to(device)
         
         # Copy parameters to target network
         self.hard_update(self.critic_target, self.critic)
